@@ -276,7 +276,11 @@ assets/
     favicon.svg
 ```
 
-## 13. Decisions and open questions
+## Interactive HTML demo
+
+Open the [interactive HTML design-system demo](demo.html) to see the proposed application shell, illustrative nautical chart, instrument cards, responsive tablet/mobile layouts, colour tokens, typography, controls, and component states. The demo is a standalone HTML/CSS/JavaScript page and uses synthetic chart artwork only; it is not a navigational chart or production application.
+
+## 14. Decisions and open questions
 
 ### Agreed direction
 - Use the sail-and-wave logo and app icon direction from the second visual proposal.
