@@ -4,7 +4,7 @@
 
 Azimute One is a proposed open-source marine navigation platform that brings charts, navigation instruments, AIS, route planning, and onboard data together in a modern, touchscreen-first interface.
 
-The project is intended to run on affordable onboard hardware such as a Raspberry Pi, with offline operation and a modular architecture as core design goals.
+The project is intended to run on affordable onboard hardware such as a Raspberry Pi, as well as conventional x86-64/AMD64 Linux computers. ARM64 and x86-64 are both target platforms, with offline operation and a modular architecture as core design goals.
 
 ## Project status
 
