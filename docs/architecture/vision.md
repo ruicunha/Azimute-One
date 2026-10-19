@@ -24,6 +24,8 @@ This document records an architectural direction, not a commitment to implement 
 - Support route planning, track recording, cross-track error, ETA, and configurable alarms as the system matures.
 - Run as a recoverable appliance with controlled software updates, diagnostics, and resilience to power interruption.
 - Support both ARM64 (including Raspberry Pi 5) and x86-64/AMD64 Linux systems from the same codebase, with architecture-specific packaging only where required.
+- Serve multiple simultaneous browser clients from one onboard instance, including the chart-table display, cockpit tablet, and phone over the boat's local Wi-Fi, without requiring internet access.
+- Keep vessel/navigation state consistent across clients while allowing each client to maintain its own presentation state, such as chart pan, zoom, and panel layout.
 - Keep interfaces between the UI, chart rendering, marine data, and navigation calculations explicit and testable.
 
 ### Non-goals for the first release
@@ -44,6 +46,10 @@ This document records an architectural direction, not a commitment to implement 
 6. **Test the failure modes.** Simulate lost sensors, invalid values, GPS jumps, network interruptions, full storage, and abrupt power loss.
 7. **Keep the first deployment small.** Begin with the minimum number of processes and expand only where separation provides a clear reliability, security, or maintenance benefit.
 8. **Be hardware-architecture agnostic.** Keep application logic and APIs portable across ARM64 and x86-64. Isolate native dependencies, system packages, and hardware-specific capabilities behind documented adapters.
+9. **One onboard service, multiple clients.** The boat hosts the authoritative application services and navigation state. Browser clients connect over the local network rather than running independent copies of the navigation system.
+10. **Shared state, local presentation.** Vessel state, active route, waypoints, AIS data, and alarm state are shared. Chart viewport, zoom/pan, visible panels, and other presentation preferences are independent per client unless explicitly designed otherwise.
+11. **Local network first, secure by default.** Core operation must work on the boat's Wi-Fi without internet. Authenticate clients, authorize state-changing actions, and do not expose onboard services directly to the public internet.
+12. **Containerize for portability, not for its own sake.** Prefer Docker images and Compose for reproducible multi-architecture deployment and isolating services with distinct dependencies or lifecycle needs. Keep the initial process/container count small; hardware access, networking, persistence, and offline updates must be designed explicitly.
 
 ## 4. Proposed runtime architecture
 
@@ -67,6 +73,18 @@ A local SPA is preferred over Next.js for the appliance UI because server-side r
 A local service exposing documented HTTP endpoints for configuration, route/waypoint CRUD, chart catalogue and import operations, plus WebSocket or an equivalent streaming interface for live vessel state and events.
 
 The UI should consume stable API contracts rather than access internal services or the database directly.
+
+### Multi-client access and session model
+
+Azimute One is a **single onboard navigation service with multiple simultaneous browser clients**. The chart-table display, a cockpit tablet, and a phone connected to the boat's Wi-Fi all use the same onboard instance and see the same authoritative navigation state. The phone does not need a separate installation, a separate backend, or an internet connection; a local address such as `http://azimute.local` may be provided where local name resolution supports it.
+
+The API is the authoritative source for shared state, including vessel data, active route, waypoints, AIS state, track status, and alarms. Use HTTP for durable operations and WebSockets or an equivalent event stream for live updates. State changes made on one client should propagate promptly to the others.
+
+Each client has independent presentation state by default: chart pan and zoom, selected panels, layout, and other display preferences must not unexpectedly move or reconfigure other screens. Shared actions such as editing the active route should be reflected across clients.
+
+The responsive UI should adapt to a chart-table display, tablet, and phone. Small-screen layouts should prioritize legibility and large touch targets without silently removing important alarm or data-quality information.
+
+Authentication and authorization are required for connected clients. Define permissions and safeguards for state-changing or safety-sensitive actions; route changes, alarm acknowledgement, and any future autopilot commands must not be treated as equivalent to passive viewing. High-impact commands may require explicit confirmation, and concurrent edits need predictable conflict handling. Remote access from outside the boat is a later capability and must use a secure access mechanism such as a VPN rather than exposing local services directly to the internet. The local network must remain useful when the internet is unavailable.
 
 ### Marine-data integration
 
@@ -130,8 +148,9 @@ These diagrams communicate the proposed boundaries and flows; they are conceptua
 
 ```mermaid
 flowchart TB
-    User[Helmsperson] --> UI[Touchscreen UI<br/>React + TypeScript]
-    UI <--> API[Navigation API<br/>HTTP + WebSocket]
+    Users[Helmspersons / connected devices] --> Clients[Browser clients<br/>Chart table · tablet · phone]
+    Clients <--> UI[Responsive UI<br/>React + TypeScript]
+    UI <--> API[Onboard Navigation API<br/>HTTP + WebSocket]
 
     API <--> Core[Navigation core<br/>Routes, geometry, ETA]
     API <--> Store[(Application state<br/>SQLite)]
@@ -184,8 +203,8 @@ flowchart TB
     subgraph Device["Raspberry Pi 5 appliance"]
         Display[7–10 inch touchscreen]
         Kiosk[Chromium kiosk]
-        UI[Local web UI]
-        API[Local navigation API]
+        UI[Responsive web UI<br/>multiple browser clients]
+        API[Local navigation API<br/>shared authoritative state]
         SK[Signal K and data adapters]
         Chart[Chart service]
         Core[Navigation calculations]
@@ -314,6 +333,16 @@ Illustrative data locations, subject to the final packaging approach:
 
 An A/B-style release strategy is one option: validate a new release, switch the active version, run health checks, and revert if the essential services fail. The exact mechanism should be chosen after the first appliance prototype.
 
+### Container deployment approach
+
+Docker is the preferred initial packaging direction for reproducible deployment across ARM64 and x86-64. Use multi-architecture images where dependencies support them and Docker Compose to coordinate the onboard services. Maintain a shared deployment definition with small platform-specific overrides only where needed.
+
+Start with a small set of containers: the UI/static web server, Azimute One API/application service, and Signal K if it is deployed as a separate service. Add separate containers for integrations or chart components only when their dependencies, permissions, release lifecycle, or failure isolation justify the extra boundary. Do not split every logical module into a network service by default, and do not introduce Kubernetes for the initial single-computer appliance.
+
+Use persistent host directories or named volumes for application data, configuration, chart datasets, and required logs; container replacement must not erase them. Treat caches as regenerable. Hardware-facing integrations must document device permissions and reconnection behaviour, and networking must be tested for serial, TCP/UDP, multicast, and broadcast requirements. Build and test ARM64 and x86-64 images in CI, and ensure installation, startup, operation, and recovery do not require internet access once images and updates are available locally.
+
+Containers improve packaging and isolation but do not by themselves provide navigation safety, service-level availability, or guaranteed recovery. Health checks, logging, backup/restore, update validation, and rollback remain explicit appliance responsibilities.
+
 ## 8. Testing strategy
 
 Testing must cover both ordinary behaviour and failures.
@@ -382,8 +411,10 @@ These estimates and phase boundaries are provisional; the chart-engine feasibili
 3. Is OpenCPN subsystem reuse technically and legally appropriate for this project?
 4. Which Raspberry Pi OS/base image and release-update strategy provide the best maintainability?
 5. Which services need separate processes for reliability, and which can initially be combined?
-6. What are the minimum acceptable performance targets for chart pan/zoom, startup, and live-data updates?
-7. What backup, recovery, and alarm guarantees can be realistically validated in the initial appliance?
+6. What are the minimum acceptable performance targets for chart pan/zoom, startup, live-data updates, and the expected number of simultaneous clients?
+7. What authentication model and authorization levels are required for viewing, route editing, alarm acknowledgement, and future autopilot control?
+8. How should concurrent state-changing operations be handled when multiple clients edit shared navigation data?
+9. What backup, recovery, and alarm guarantees can be realistically validated in the initial appliance?
 
 Each significant decision should be captured as an ADR under `docs/architecture/adr/` once that documentation structure is established.
 
