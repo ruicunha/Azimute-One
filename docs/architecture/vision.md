@@ -9,7 +9,7 @@
 
 Azimute One aims to provide a modern, modular marine navigation platform that combines chart display, vessel position, navigation instruments, AIS, route and waypoint planning, track recording, and alarms in one coherent interface.
 
-The initial target is an affordable onboard appliance based on a Raspberry Pi 5 and a 7–10 inch touchscreen. The software should be usable without internet access and should leave room for future hardware, chart sources, and marine-data integrations.
+The primary appliance target is a Raspberry Pi 5 with a 7–10 inch touchscreen, but Azimute One must also run on conventional x86-64 (AMD64) computers. ARM64 is an initial deployment target, not an architectural restriction. The same core application, chart compatibility, data integrations, and user workflows should be available on both architectures wherever dependencies permit. The software should be usable without internet access and should leave room for future hardware, chart sources, and marine-data integrations.
 
 This document records an architectural direction, not a commitment to implement every proposed component immediately. In particular, chart-engine feasibility must be established before the application structure is built around a particular engine.
 
@@ -23,6 +23,7 @@ This document records an architectural direction, not a commitment to implement 
 - Display vessel position, heading, speed, depth, wind, AIS targets, and data-quality/freshness indicators where available.
 - Support route planning, track recording, cross-track error, ETA, and configurable alarms as the system matures.
 - Run as a recoverable appliance with controlled software updates, diagnostics, and resilience to power interruption.
+- Support both ARM64 (including Raspberry Pi 5) and x86-64/AMD64 Linux systems from the same codebase, with architecture-specific packaging only where required.
 - Keep interfaces between the UI, chart rendering, marine data, and navigation calculations explicit and testable.
 
 ### Non-goals for the first release
@@ -42,6 +43,7 @@ This document records an architectural direction, not a commitment to implement 
 5. **Prefer reuse, with boundaries.** Use existing projects and libraries when technically suitable, actively maintained enough, and compatible with the desired distribution and licence.
 6. **Test the failure modes.** Simulate lost sensors, invalid values, GPS jumps, network interruptions, full storage, and abrupt power loss.
 7. **Keep the first deployment small.** Begin with the minimum number of processes and expand only where separation provides a clear reliability, security, or maintenance benefit.
+8. **Be hardware-architecture agnostic.** Keep application logic and APIs portable across ARM64 and x86-64. Isolate native dependencies, system packages, and hardware-specific capabilities behind documented adapters.
 
 ## 4. Proposed runtime architecture
 
@@ -81,6 +83,8 @@ Signal K and the Azimute One API should have distinct roles: Signal K handles ma
 ### Chart service and chart viewport
 
 Use a chart adapter boundary so the application can evaluate and potentially replace the underlying chart implementation without rewriting route management, instrument panels, or the overall UI.
+
+**Target platforms:** Linux on ARM64/aarch64 and x86-64/AMD64. Validate both during feasibility work; do not let a Raspberry Pi-specific dependency leak into the shared application layer.
 
 **Candidate technologies to evaluate, not yet selected:**
 - **MapLibre GL JS** for map viewport interactions and overlays. Do not assume it alone provides full marine chart format support or nautical portrayal.
