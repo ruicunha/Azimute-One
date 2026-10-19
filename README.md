@@ -23,7 +23,7 @@ The first engineering milestone is to validate the chart-rendering and chart-dat
 
 ## Architecture
 
-Read the [Architecture Vision](docs/architecture/vision.md) for the proposed system boundaries, technology candidates, conceptual repository layout, milestones, and open decisions.
+Read the [Architecture Vision](docs/architecture/vision.md) for system boundaries, technology candidates, chart compatibility requirements, and open decisions. The [Roadmap](docs/roadmap.md) describes the phased feasibility and delivery plan.
 
 ## Important note
 
