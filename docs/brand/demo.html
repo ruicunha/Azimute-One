@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0B2A44">
+<title>Azimute One — Design System & Interactive UI Demo</title>
+<style>
+:root{
+ --brand-navy:#0B2A44;--brand-blue:#1F6FA8;--brand-teal:#2CC0C3;--brand-orange:#FF8A00;
+ --ui-bg:#F4F7F9;--ui-surface:#FFFFFF;--ui-dark:#071C2B;--ui-dark-raised:#102D42;
+ --text:#0F172A;--muted:#64748B;--text-dark:#F8FAFC;--muted-dark:#B8C7D4;
+ --border:#D7E0E7;--border-dark:#294356;--success:#22A06B;--warning:#E5A000;--error:#D64545;
+ --chart-water-1:#DCEFF8;--chart-water-2:#B9E0F4;--chart-water-3:#91CBEA;--chart-land:#F3EEDC;--chart-land-detail:#E5DFC9;--chart-coast:#9DBBCB;--chart-contour:#8FC4E2;--chart-label:#42677D;
+ --radius-sm:5px;--radius-md:9px;--radius-lg:14px;--shadow:0 12px 30px rgba(4,26,42,.12);
+ --font:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--ui-bg);color:var(--text);font:14px/1.5 var(--font)}button,input{font:inherit}button{cursor:pointer}a{color:inherit}
+:focus-visible{outline:3px solid #56C6E8;outline-offset:2px}
+.topbar{height:64px;background:var(--ui-dark);color:white;display:flex;align-items:center;justify-content:space-between;padding:0 clamp(16px,4vw,52px);position:sticky;top:0;z-index:20;border-bottom:1px solid #23445a}
+.brand{display:flex;align-items:center;gap:11px;text-decoration:none;font-weight:750;letter-spacing:.13em;font-size:13px}.brand svg{width:35px;height:35px}.brand .one{color:#39B9E4}.toplinks{display:flex;gap:22px;align-items:center}.toplinks a{font-size:12px;text-decoration:none;color:#C6D5E0}.toplinks a:hover{color:white}.topnote{border:1px solid #3A5C72;padding:6px 10px;border-radius:99px;color:#C6D5E0;font-size:11px}
+main{max-width:1600px;margin:auto;padding:32px clamp(14px,3vw,40px) 60px}.eyebrow{text-transform:uppercase;letter-spacing:.16em;font-size:10px;font-weight:750;color:var(--brand-blue)}h1,h2,h3,p{margin-top:0}h1{font-size:clamp(28px,4vw,44px);line-height:1.08;letter-spacing:-.035em;margin:10px 0 14px}h2{font-size:22px;letter-spacing:-.025em;margin-bottom:6px}h3{font-size:14px;margin-bottom:10px}.intro{display:flex;justify-content:space-between;gap:30px;align-items:end;margin-bottom:24px}.intro p{max-width:650px;color:var(--muted);font-size:15px;margin-bottom:0}.pill{display:inline-flex;align-items:center;gap:7px;background:#E4F5EF;color:#116748;padding:7px 11px;border-radius:99px;font-size:11px;font-weight:700;white-space:nowrap}.dot{width:7px;height:7px;background:var(--success);border-radius:50%}
+.section{margin-top:34px}.sectionhead{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:14px}.sectionhead p{color:var(--muted);margin:0;font-size:12px}.panel{background:white;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:0 2px 8px rgba(9,36,54,.035)}
+/* Product demo */
+.demo-shell{background:var(--ui-dark);border:1px solid #16374c;border-radius:16px;overflow:hidden;box-shadow:var(--shadow);color:var(--text-dark)}
+.appbar{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--border-dark);background:#091F30}.appbrand{display:flex;align-items:center;gap:9px;font-size:11px;font-weight:750;letter-spacing:.15em}.appbrand svg{width:29px;height:29px}.appbrand em{font-style:normal;color:#39B9E4}.appbar-right{display:flex;align-items:center;gap:14px;color:#C4D3DF;font-size:11px}.status{display:inline-flex;align-items:center;gap:6px}.status .dot{width:6px;height:6px}
+.app-layout{display:grid;grid-template-columns:174px minmax(260px,1fr) 202px;min-height:510px}
+.sidebar{background:#091F30;border-right:1px solid var(--border-dark);padding:14px 10px;display:flex;flex-direction:column}.side-label{font-size:9px;text-transform:uppercase;letter-spacing:.16em;color:#71899A;padding:9px 10px}.navitem{display:flex;align-items:center;gap:10px;padding:10px;border-radius:7px;color:#C3D1DB;background:transparent;border:0;text-align:left;font-size:12px;margin:2px 0;width:100%;min-height:38px}.navitem svg{width:17px;height:17px;flex-shrink:0}.navitem:hover{background:#17364A;color:white}.navitem.active{background:var(--brand-blue);color:white;box-shadow:inset 3px 0 #49C9E5}.sidebar-bottom{margin-top:auto;border-top:1px solid var(--border-dark);padding:12px 8px 2px;color:#AFC3D1;font-size:10px}
+.maparea{position:relative;min-width:0;min-height:510px;background:#C6E5F4;overflow:hidden}.chart{position:absolute;inset:0;width:100%;height:100%;display:block;background:var(--chart-water-1)}.chart-controls{position:absolute;left:12px;top:12px;display:flex;flex-direction:column;gap:6px}.chart-tool{width:39px;height:39px;border:1px solid rgba(18,52,73,.13);border-radius:9px;background:rgba(255,255,255,.96);color:#17364A;display:grid;place-items:center;box-shadow:0 3px 8px #17364a20}.chart-tool svg{width:19px;height:19px}.chart-tool:hover,.chart-tool.selected{background:#DDF7FA;border-color:#42BFCB;color:#075B76}.zoomtools{position:absolute;right:12px;bottom:70px;display:flex;flex-direction:column;gap:4px}.zoomtools button{width:38px;height:38px;background:#fff;border:1px solid #cadde7;border-radius:8px;color:var(--brand-navy);font-size:20px;box-shadow:0 3px 10px #17364a20}.recenter{position:absolute;right:12px;bottom:18px;background:var(--brand-blue);color:white;border:0;border-radius:50%;width:43px;height:43px;display:grid;place-items:center;box-shadow:0 5px 14px #1f6fa855}.scale{position:absolute;left:18px;bottom:15px;color:#17364A;font-size:10px;display:flex;align-items:center;gap:8px;text-shadow:0 1px white}.scale-line{height:6px;width:76px;border-left:1.5px solid;border-right:1.5px solid;border-bottom:1.5px solid}.mapbadge{position:absolute;right:12px;top:12px;padding:6px 9px;border-radius:6px;background:#FFFFFFE8;color:#25465C;font-size:10px;font-weight:650;border:1px solid #d5e4ed}
+.instrument-panel{padding:12px;background:#0B2436;border-left:1px solid var(--border-dark);display:flex;flex-direction:column;gap:8px}.instrument-top{display:flex;align-items:center;justify-content:space-between;font-size:10px;color:#9CB1C0;padding:2px 2px 6px}.instrument-card{background:#102D42;border:1px solid #1b3b50;border-radius:8px;padding:10px 11px;min-width:0}.instrument-label{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#9FB5C4}.instrument-value{font-size:25px;font-weight:550;line-height:1.2;margin-top:3px;letter-spacing:-.03em;font-variant-numeric:tabular-nums}.instrument-unit{font-size:12px;color:#C0D0DB;letter-spacing:0}.instrument-sub{font-size:10px;color:#A5BBC9;margin-top:3px}.instrument-pair{display:grid;grid-template-columns:1fr 1fr;gap:7px}.compass{display:grid;place-items:center;padding:8px 0 0}.compass svg{width:116px;max-width:100%;height:auto}.app-toast{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);padding:9px 14px;background:#092234;color:white;border:1px solid #416174;border-radius:99px;font-size:11px;box-shadow:var(--shadow);display:none;white-space:nowrap}.app-toast.show{display:block}
+/* map illustration */
+.chart .land{fill:var(--chart-land);stroke:var(--chart-coast);stroke-width:2}.chart .terrain{fill:none;stroke:var(--chart-land-detail);stroke-width:1.2}.chart .contour{fill:none;stroke:var(--chart-contour);stroke-width:1.15;opacity:.9}.chart .depth{font-size:12px;fill:var(--chart-label);font-family:var(--font)}.chart .place{font-size:14px;fill:#284E63;font-weight:600;font-family:var(--font)}.chart .smallplace{font-size:10px;fill:#3B6277;font-family:var(--font)}.chart .route{fill:none;stroke:#B65AD9;stroke-width:2.5;stroke-dasharray:8 7}.chart .track{fill:none;stroke:#188CB4;stroke-width:2.5;stroke-dasharray:3 5}.chart .ownship{fill:#0B2A44;stroke:white;stroke-width:2.5;stroke-linejoin:round}.chart .waypoint{fill:white;stroke:#B65AD9;stroke-width:2.5}.chart .buoy{stroke:#fff;stroke-width:1.5}.chart .hidden{display:none}
+.token-grid{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:10px}.swatch{height:62px;border-radius:8px;border:1px solid #00000010;margin-bottom:9px}.token{border:1px solid var(--border);border-radius:10px;padding:10px;background:white;min-width:0}.token strong{display:block;font-size:11px}.token code{display:block;color:var(--muted);font-size:10px;margin-top:3px}.token small{display:block;color:var(--muted);font-size:10px;margin-top:5px}
+.two-col{display:grid;grid-template-columns:1.05fr .95fr;gap:18px}.subpanel{padding:20px}.type-sample{display:flex;align-items:center;gap:22px;border-bottom:1px solid #E9EEF2;padding:13px 0}.type-sample:last-child{border:0}.type-aa{font-size:43px;letter-spacing:-.05em;line-height:1}.type-meta strong{font-size:16px}.type-meta p{font-size:11px;color:var(--muted);margin:2px 0 0}
+.component-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 0}.btn{border:1px solid transparent;border-radius:8px;padding:10px 15px;min-height:40px;font-weight:650;font-size:12px}.btn-primary{background:var(--brand-blue);color:white}.btn-primary:hover{background:#185A8A}.btn-secondary{background:#EAF3F8;color:#164D70;border-color:#D3E4EE}.btn-quiet{background:transparent;border-color:var(--border);color:var(--text)}.btn-danger{background:#FCE9E9;color:#9F2626;border-color:#F4CACA}.toggle{width:43px;height:24px;border:0;border-radius:99px;background:#9AAAB6;padding:3px;display:flex;align-items:center;transition:background .15s}.toggle span{width:18px;height:18px;background:white;border-radius:50%;box-shadow:0 1px 4px #0002;transition:transform .15s}.toggle[aria-checked="true"]{background:var(--brand-blue)}.toggle[aria-checked="true"] span{transform:translateX(19px)}.select-demo{padding:9px 12px;border:1px solid var(--border);border-radius:8px;background:white;color:var(--text);min-width:150px}
+.icon-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}.icon-cell{display:flex;flex-direction:column;align-items:center;gap:8px;padding:15px 6px;border:1px solid var(--border);border-radius:9px;background:#fff;color:var(--brand-navy);font-size:10px}.icon-cell svg{width:23px;height:23px}.state-list{display:grid;gap:9px}.state{display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;background:#F7F9FA;border:1px solid #E8EDF1;font-size:12px}.state-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.responsive-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(230px,.8fr);gap:18px;align-items:start}.device{background:#081E2E;border:7px solid #0B2436;border-radius:17px;padding:9px;color:white;box-shadow:var(--shadow)}.device-head{display:flex;align-items:center;justify-content:space-between;font-size:10px;letter-spacing:.1em;padding:4px 5px 9px}.device-head svg{width:24px;height:24px}.tablet-screen{display:grid;grid-template-columns:1fr 145px;gap:7px;min-height:190px}.mini-map{position:relative;min-height:190px;border-radius:7px;overflow:hidden;background:#DCEFF8}.mini-map svg{position:absolute;width:100%;height:100%;inset:0}.mini-metrics{display:grid;align-content:start;gap:7px}.mini-metric{background:#102D42;border-radius:6px;padding:8px}.mini-metric small{display:block;color:#AFC1CD;font-size:8px;letter-spacing:.12em}.mini-metric b{display:block;font-size:17px;font-weight:500;margin-top:2px}.phone{max-width:300px;margin:0 auto}.phone-screen{background:#0B2436;border-radius:10px;overflow:hidden}.phone-map{height:270px;position:relative;background:#DCEFF8}.phone-map svg{position:absolute;inset:0;width:100%;height:100%}.phone-cards{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:8px}.phone-card{background:#102D42;border-radius:6px;padding:8px}.phone-card small{font-size:8px;color:#B4C7D3;display:block}.phone-card b{font-size:15px;font-weight:500}.bottomnav{display:flex;justify-content:space-around;padding:10px 2px 5px;color:#53C8E2;font-size:9px}
+.footer{padding:24px 0 0;margin-top:42px;border-top:1px solid var(--border);display:flex;justify-content:space-between;gap:20px;color:var(--muted);font-size:11px}.footer a{color:var(--brand-blue)}
+@media(max-width:1050px){.app-layout{grid-template-columns:145px minmax(220px,1fr) 175px}.instrument-panel{padding:8px}.instrument-value{font-size:21px}.token-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.icon-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:760px){.toplinks a:not(:last-child){display:none}.intro{align-items:start;flex-direction:column}.sectionhead{align-items:start;flex-direction:column}.app-layout{grid-template-columns:minmax(0,1fr)}.sidebar{display:none}.maparea{min-height:410px;grid-row:1}.instrument-panel{border-left:0;border-top:1px solid var(--border-dark);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.instrument-top{grid-column:1/-1}.compass{display:none}.app-layout{min-height:0}.two-col,.responsive-grid{grid-template-columns:1fr}.token-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.icon-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.tablet-screen{grid-template-columns:1fr 110px}.topnote{display:none}main{padding-top:24px}.footer{flex-direction:column}.instrument-card{padding:9px}.instrument-value{font-size:22px}}
+@media(max-width:420px){.appbar-right .status span:last-child{display:none}.maparea{min-height:360px}.chart-tool{width:35px;height:35px}.tablet-screen{grid-template-columns:1fr}.mini-metrics{grid-template-columns:1fr 1fr}.token-grid{gap:7px}.swatch{height:48px}.subpanel{padding:14px}}
+</style>
+</head>
+<body>
+<header class="topbar">
+ <a class="brand" href="#top" aria-label="Azimute One home">
+  <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 47 34 5 27 39Z" fill="#F8FAFC"/><path d="M35 6 53 45 30 33Z" fill="#2CC0C3"/><path d="M7 48 Q23 40 32 48 T57 47 Q45 59 32 52 T7 48Z" fill="#1F6FA8"/></svg>
+  <span>AZIMUTE <span class="one">ONE</span></span>
+ </a>
+ <nav class="toplinks" aria-label="Page navigation">
+  <a href="#application">Application</a><a href="#tokens">Tokens</a><a href="#components">Components</a><a href="#responsive">Responsive</a>
+  <span class="topnote">DESIGN SYSTEM · 0.1</span>
+ </nav>
+</header>
+<main id="top">
+ <div class="intro">
+  <div><div class="eyebrow">Brand & interface preview</div><h1>Your course. Your instruments.<br>Your sea.</h1><p>A living HTML design-system demo for Azimute One. The application frame stays dark and instrument-like; the chart itself uses clean pale-blue water, muted sand land, and subtle depth contours.</p></div>
+  <span class="pill"><span class="dot"></span> Concept · interactive prototype</span>
+ </div>
+
+ <section class="section" id="application">
+  <div class="sectionhead"><div><div class="eyebrow">01 / Product experience</div><h2>Chart-first navigation</h2></div><p>Try the navigation, chart layers, recenter, zoom, and day/night controls.</p></div>
+  <div class="demo-shell">
+   <div class="appbar">
+    <div class="appbrand"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 47 34 5 27 39Z" fill="#F8FAFC"/><path d="M35 6 53 45 30 33Z" fill="#2CC0C3"/><path d="M7 48 Q23 40 32 48 T57 47 Q45 59 32 52 T7 48Z" fill="#1F6FA8"/></svg><span>AZIMUTE <em>ONE</em></span></div>
+    <div class="appbar-right"><span>13:45 UTC</span><span>☀ 18°</span><span class="status"><span class="dot"></span><span>GNSS CONNECTED</span></span><button class="chart-tool" style="width:30px;height:30px;background:transparent;color:#dbe7ee;border-color:#294356;box-shadow:none" aria-label="Toggle day or night map style" id="mapThemeBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg></button></div>
+   </div>
+   <div class="app-layout">
+    <aside class="sidebar">
+     <div class="side-label">Navigation</div>
+     <button class="navitem active" data-view="Chart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5.5 9 3l6 2.5L21 3v15.5L15 21l-6-2.5L3 21Z"/><path d="M9 3v15.5M15 5.5V21"/></svg>Chart</button>
+     <button class="navitem" data-view="Routes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="5" cy="18" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="13" cy="14" r="2"/><path d="m7 17 4-2m3-2 3-6"/></svg>Routes</button>
+     <button class="navitem" data-view="Waypoints"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>Waypoints</button>
+     <button class="navitem" data-view="Tracks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 17c3-8 6 8 9 0s6-8 9-1M3 10c3-8 6 8 9 0s6-8 9-1"/></svg>Tracks</button>
+     <button class="navitem" data-view="AIS"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m12 3 8 17H4Z"/><path d="M12 3v17"/></svg>AIS targets</button>
+     <button class="navitem" data-view="Weather"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 18h12a4 4 0 0 0 .3-8 6.5 6.5 0 0 0-12.6 1.5A3.3 3.3 0 0 0 6 18Z"/></svg>Weather</button>
+     <button class="navitem" data-view="Instruments"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="m12 12 4-5m-4 5-3 4"/></svg>Instruments</button>
+     <button class="navitem" data-view="Alarms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>Alarms</button>
+     <button class="navitem" data-view="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.7 1l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.7-1l-1.7.7-1.4-2.4 1.4-1.1a7 7 0 0 1 0-2l-1.4-1.1 1.4-2.4 1.7.7a8 8 0 0 1 1.7-1l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.7 1l1.7-.7 1.4 2.4-1.4 1.1a7 7 0 0 1 0 2Z" transform="translate(-1 -1) scale(1.08)"/></svg>Settings</button>
+     <div class="sidebar-bottom"><span class="dot" style="display:inline-block;margin-right:6px"></span>Signal K · Live data</div>
+    </aside>
+    <div class="maparea" id="mapArea">
+     <svg class="chart" id="mainChart" viewBox="0 0 900 620" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Illustrative nautical chart showing the coast near Cascais, depth contours, route, and vessel position">
+      <defs><pattern id="chartGrid" width="90" height="90" patternUnits="userSpaceOnUse"><path d="M90 0H0V90" fill="none" stroke="#fff" stroke-width=".7" opacity=".22"/></pattern></defs>
+      <rect width="900" height="620" fill="#DCEFF8"/><rect width="900" height="620" fill="url(#chartGrid)"/>
+      <path class="land" d="M0 0H260L248 42 270 68 236 94 256 125 223 153 237 183 210 215 225 248 193 278 213 310 177 339 192 371 155 395 170 424 139 450 149 483 115 510 126 540 92 566 105 595 71 620H0Z"/>
+      <path class="land" d="M900 0H796L781 36 808 64 777 90 792 124 754 152 774 185 743 213 761 242 733 273 749 300 715 332 735 364 701 393 713 425 681 455 696 489 667 517 683 551 651 583 666 620H900Z"/>
+      <path class="terrain" d="M0 35Q90 12 225 54T248 116M0 83Q93 61 221 97T222 166M0 142Q70 118 208 151T211 218M0 200Q76 179 188 213T190 270M0 266Q60 246 173 282T172 335M0 328Q67 311 153 347T154 401M0 394Q52 377 136 412T136 470M0 464Q47 444 110 480T109 539M0 532Q35 514 85 547T88 610"/>
+      <path class="terrain" d="M900 43Q823 18 790 64T900 115M900 120Q822 93 774 143T900 194M900 201Q803 173 752 222T900 276M900 283Q794 257 726 302T900 356M900 369Q786 337 704 389T900 446M900 455Q772 428 688 478T900 538M900 545Q764 518 670 568T900 620"/>
+      <g class="contour"><path d="M270 -20Q340 70 293 154T330 310T290 480T345 650"/><path d="M320 -20Q390 60 340 154T380 310T341 480T394 650"/><path d="M374 -20Q440 62 390 160T433 320T394 480T448 650"/><path d="M430 -20Q490 60 445 160T489 320T449 480T503 650"/><path d="M490 -20Q550 62 505 160T549 320T510 480T560 650"/><path d="M550 -20Q610 62 565 160T610 320T570 480T620 650"/><path d="M610 -20Q670 62 625 160T670 320T630 480T680 650"/><path d="M670 -20Q730 62 685 160T730 320T690 480T740 650"/><path d="M730 -20Q790 62 745 160T790 320T750 480T800 650"/></g>
+      <g class="depth"><text x="280" y="86">12</text><text x="355" y="135">18</text><text x="430" y="93">24</text><text x="510" y="151">32</text><text x="585" y="100">28</text><text x="680" y="174">36</text><text x="740" y="124">42</text><text x="295" y="260">8</text><text x="382" y="300">14</text><text x="475" y="255">22</text><text x="555" y="328">31</text><text x="645" y="280">38</text><text x="720" y="350">44</text><text x="280" y="440">10</text><text x="380" y="500">16</text><text x="470" y="445">24</text><text x="580" y="510">33</text><text x="680" y="460">40</text><text x="750" y="555">48</text></g>
+      <text class="place" x="40" y="255">Cascais</text><text class="smallplace" x="43" y="277">Baía de Cascais</text><text class="place" x="800" y="190">Cabo Raso</text>
+      <path class="route" id="routeLine" d="M460 500Q490 430 520 355T575 235T650 110"/><path class="track" id="trackLine" d="M442 530Q450 485 460 460T520 355"/>
+      <g id="routeMarks"><circle class="waypoint" cx="460" cy="500" r="7"/><circle class="waypoint" cx="520" cy="355" r="7"/><circle class="waypoint" cx="575" cy="235" r="7"/><circle class="waypoint" cx="650" cy="110" r="7"/></g>
+      <g transform="translate(520 355) rotate(27)"><path class="ownship" d="M0 -20 10 16 0 10 -10 16Z"/></g>
+      <g class="buoy" transform="translate(390 300)"><path d="M0 0V19" stroke="#0B2A44" stroke-width="2"/><path d="M-5 2 0 -7 5 2Z" fill="#E44736"/><path d="M-6 7H6" stroke="#E44736" stroke-width="4"/></g>
+      <g class="buoy" transform="translate(690 330)"><path d="M0 0V19" stroke="#0B2A44" stroke-width="2"/><path d="M-5 2 0 -7 5 2Z" fill="#2E9D70"/><path d="M-6 7H6" stroke="#2E9D70" stroke-width="4"/></g>
+      <g class="buoy" transform="translate(600 410)"><path d="M0 0V19" stroke="#0B2A44" stroke-width="2"/><path d="M-5 2 0 -7 5 2Z" fill="#E44736"/><path d="M-6 7H6" stroke="#E44736" stroke-width="4"/></g>
+     </svg>
+     <div class="chart-controls">
+      <button class="chart-tool selected" data-layer="depth" aria-pressed="true" aria-label="Toggle depth contours" title="Depth contours"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m3 8 9-5 9 5-9 5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg></button>
+      <button class="chart-tool selected" data-layer="route" aria-pressed="true" aria-label="Toggle planned route" title="Route"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="5" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M7 18c6-1 2-9 9-11"/></svg></button>
+      <button class="chart-tool selected" data-layer="track" aria-pressed="true" aria-label="Toggle track" title="Track"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 18c4-12 7 7 11-3s5-6 7-4"/></svg></button>
+      <button class="chart-tool selected" data-layer="ais" aria-pressed="true" aria-label="Toggle AIS targets" title="AIS targets"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m12 3 8 17H4Z"/><path d="M12 3v17"/></svg></button>
+     </div>
+     <div class="mapbadge" id="mapLabel">LIGHT CHART · DEMO DATA</div>
+     <div class="zoomtools"><button id="zoomIn" aria-label="Zoom in">+</button><button id="zoomOut" aria-label="Zoom out">−</button></div>
+     <button class="recenter" id="recenter" aria-label="Recenter on own ship" title="Recenter"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg></button>
+     <div class="scale"><span>2 NM</span><span class="scale-line"></span></div><div class="app-toast" id="toast" role="status"></div>
+    </div>
+    <aside class="instrument-panel">
+     <div class="instrument-top"><span>VESSEL INSTRUMENTS</span><span>LIVE PREVIEW</span></div>
+     <div class="instrument-card"><div class="instrument-label">Speed over ground</div><div class="instrument-value">6.4 <span class="instrument-unit">kn</span></div><div class="instrument-sub">SOG · GPS</div></div>
+     <div class="instrument-card"><div class="instrument-label">Course over ground</div><div class="instrument-value">128<span class="instrument-unit">°</span></div><div class="instrument-sub">COG · GPS</div></div>
+     <div class="instrument-card"><div class="instrument-label">Position</div><div class="instrument-value" style="font-size:15px;letter-spacing:0">38° 41.123′ N</div><div class="instrument-value" style="font-size:15px;letter-spacing:0;margin-top:0">009° 10.456′ W</div></div>
+     <div class="instrument-pair">
+      <div class="instrument-card"><div class="instrument-label">Depth</div><div class="instrument-value">24.6<span class="instrument-unit"> m</span></div></div>
+      <div class="instrument-card"><div class="instrument-label">Wind TWS</div><div class="instrument-value">18.2<span class="instrument-unit"> kn</span></div></div>
+     </div>
+     <div class="compass"><svg viewBox="0 0 140 140" role="img" aria-label="Compass showing heading"><circle cx="70" cy="70" r="51" fill="none" stroke="#345266" stroke-dasharray="2 4"/><circle cx="70" cy="70" r="43" fill="none" stroke="#244458"/><text x="70" y="13" text-anchor="middle" fill="#AFC4D1" font-size="9">N</text><text x="128" y="73" text-anchor="middle" fill="#AFC4D1" font-size="9">E</text><text x="70" y="135" text-anchor="middle" fill="#AFC4D1" font-size="9">S</text><text x="12" y="73" text-anchor="middle" fill="#AFC4D1" font-size="9">W</text><path d="M70 30 82 91 70 81 58 91Z" fill="#2CC0C3"/><path d="M70 30 70 81 58 91Z" fill="#F8FAFC"/><circle cx="70" cy="75" r="4" fill="#F8FAFC"/></svg></div>
+    </aside>
+   </div>
+  </div>
+  <p style="font-size:11px;color:var(--muted);margin:10px 2px 0">Illustrative UI and synthetic chart artwork only. This is not a navigational chart and must not be used for real navigation.</p>
+ </section>
+
+ <section class="section" id="tokens">
+  <div class="sectionhead"><div><div class="eyebrow">02 / Design tokens</div><h2>Colour system</h2></div><p>Brand/UI colours are intentionally separate from the chart palette.</p></div>
+  <div class="panel subpanel">
+   <h3>Brand and application chrome</h3><div class="token-grid">
+    <div class="token"><div class="swatch" style="background:#0B2A44"></div><strong>Ocean Deep</strong><code>#0B2A44</code><small>Brand, sidebar, headers</small></div>
+    <div class="token"><div class="swatch" style="background:#1F6FA8"></div><strong>Ocean Blue</strong><code>#1F6FA8</code><small>Primary actions, active</small></div>
+    <div class="token"><div class="swatch" style="background:#2CC0C3"></div><strong>Navigation Teal</strong><code>#2CC0C3</code><small>Highlights, accents</small></div>
+    <div class="token"><div class="swatch" style="background:#FF8A00"></div><strong>Alert Orange</strong><code>#FF8A00</code><small>Warnings, caution</small></div>
+    <div class="token"><div class="swatch" style="background:#F4F7F9"></div><strong>UI Background</strong><code>#F4F7F9</code><small>Settings, docs</small></div>
+    <div class="token"><div class="swatch" style="background:#071C2B"></div><strong>Night Frame</strong><code>#071C2B</code><small>Dark app shell</small></div>
+    <div class="token"><div class="swatch" style="background:#D7E0E7"></div><strong>UI Border</strong><code>#D7E0E7</code><small>Separators, edges</small></div>
+    <div class="token"><div class="swatch" style="background:#64748B"></div><strong>Muted Text</strong><code>#64748B</code><small>Secondary information</small></div>
+   </div>
+   <h3 style="margin-top:25px">Chart palette · map only</h3><div class="token-grid">
+    <div class="token"><div class="swatch" style="background:#DCEFF8"></div><strong>Chart Water 01</strong><code>#DCEFF8</code><small>Pale coastal water</small></div>
+    <div class="token"><div class="swatch" style="background:#B9E0F4"></div><strong>Chart Water 02</strong><code>#B9E0F4</code><small>General water</small></div>
+    <div class="token"><div class="swatch" style="background:#91CBEA"></div><strong>Chart Water 03</strong><code>#91CBEA</code><small>Deeper water</small></div>
+    <div class="token"><div class="swatch" style="background:#F3EEDC"></div><strong>Chart Land</strong><code>#F3EEDC</code><small>Land fill</small></div>
+    <div class="token"><div class="swatch" style="background:#E5DFC9"></div><strong>Terrain Detail</strong><code>#E5DFC9</code><small>Low contrast detail</small></div>
+    <div class="token"><div class="swatch" style="background:#9DBBCB"></div><strong>Coastline</strong><code>#9DBBCB</code><small>Shore boundaries</small></div>
+    <div class="token"><div class="swatch" style="background:#8FC4E2"></div><strong>Depth Contour</strong><code>#8FC4E2</code><small>Depth contours</small></div>
+    <div class="token"><div class="swatch" style="background:#42677D"></div><strong>Chart Labels</strong><code>#42677D</code><small>Depth annotations</small></div>
+   </div>
+  </div>
+ </section>
+
+ <section class="section">
+  <div class="sectionhead"><div><div class="eyebrow">03 / Type & visual language</div><h2>Typography and iconography</h2></div><p>Clear at a glance, consistent across screen sizes.</p></div>
+  <div class="two-col">
+   <div class="panel subpanel">
+    <h3>Typography · Inter / system sans-serif</h3>
+    <div class="type-sample"><div class="type-aa">Aa</div><div class="type-meta"><strong>Display / page title</strong><p>32–44 px · Semibold · Marketing and page headers</p></div></div>
+    <div class="type-sample"><div style="font-size:25px;font-weight:650;letter-spacing:-.03em">Heading</div><div class="type-meta"><strong>Section heading</strong><p>22 px · Semibold · Clear hierarchy</p></div></div>
+    <div class="type-sample"><div style="font-size:15px">Body text</div><div class="type-meta"><strong>Body and labels</strong><p>14–16 px · Regular · Operational UI</p></div></div>
+    <div class="type-sample"><div style="font-size:24px;font-weight:600;font-variant-numeric:tabular-nums">6.4 kn</div><div class="type-meta"><strong>Instrument value</strong><p>24–32 px · Tabular numerals · High glanceability</p></div></div>
+   </div>
+   <div class="panel subpanel">
+    <h3>Core icons</h3><div class="icon-grid">
+     <div class="icon-cell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m3 8 9-5 9 5-9 5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg>Charts</div>
+     <div class="icon-cell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="5" cy="18" r="2"/><circle cx="18" cy="5" r="2"/><path d="m7 17 4-2m3-2 3-6"/></svg>Routes</div>
+     <div class="icon-cell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>Waypoints</div>
+     <div class="icon-cell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m12 3 8 17H4Z"/><path d="M12 3v17"/></svg>AIS</div>
+     <div class="icon-cell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 18h12a4 4 0 0 0 .3-8 6.5 6.5 0 0 0-12.6 1.5A3.3 3.3 0 0 0 6 18Z"/></svg>Weather</div>
+     <div class="icon-cell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>Alarms</div>
+    </div>
+    <p style="color:var(--muted);font-size:11px;margin:14px 0 0">Use one outline icon family for UI controls. Chart-standard objects must use the symbols supplied by the selected chart engine.</p>
+   </div>
+  </div>
+ </section>
+
+ <section class="section" id="components">
+  <div class="sectionhead"><div><div class="eyebrow">04 / Component library</div><h2>Controls and status states</h2></div><p>Interactive samples of the proposed component language.</p></div>
+  <div class="two-col">
+   <div class="panel subpanel">
+    <h3>Buttons and controls</h3>
+    <div class="component-row"><button class="btn btn-primary" id="primaryDemo">Primary action</button><button class="btn btn-secondary" id="secondaryDemo">Secondary</button><button class="btn btn-quiet" id="quietDemo">Quiet action</button></div>
+    <div class="component-row"><button class="toggle" role="switch" aria-checked="true" aria-label="Demo toggle" id="demoToggle"><span></span></button><label for="demoToggle" style="font-size:12px;color:var(--muted)">Show route overlay</label><select class="select-demo" id="themeSelect" aria-label="Select UI theme"><option value="dark">Dark instrument frame</option><option value="light">Light UI sample</option></select></div>
+    <div class="component-row"><button class="btn btn-danger" id="dangerDemo">Clear route…</button><button class="btn btn-secondary" id="disabledDemo" disabled style="opacity:.5;cursor:not-allowed">Unavailable</button></div>
+    <p style="font-size:11px;color:var(--muted);margin:8px 0 0">Minimum touch target guideline: 44 × 44 px where practical. Always provide visible focus and selected states.</p>
+   </div>
+   <div class="panel subpanel">
+    <h3>Connection and data states</h3><div class="state-list">
+     <div class="state"><span class="state-dot" style="background:#22A06B"></span><div><strong>Connected</strong><div style="color:var(--muted);font-size:11px">GNSS stream active · data current</div></div></div>
+     <div class="state"><span class="state-dot" style="background:#E5A000"></span><div><strong>Data becoming stale</strong><div style="color:var(--muted);font-size:11px">Show freshness and source, not colour alone</div></div></div>
+     <div class="state"><span class="state-dot" style="background:#D64545"></span><div><strong>Sensor unavailable</strong><div style="color:var(--muted);font-size:11px">Never present missing values as current</div></div></div>
+     <div class="state"><span class="state-dot" style="background:#2589C7"></span><div><strong>Information</strong><div style="color:var(--muted);font-size:11px">Non-critical system messages</div></div></div>
+    </div>
+   </div>
+  </div>
+ </section>
+
+ <section class="section" id="responsive">
+  <div class="sectionhead"><div><div class="eyebrow">05 / Responsive behaviour</div><h2>One design, different helm stations</h2></div><p>Chart stays central; secondary information adapts to available space.</p></div>
+  <div class="responsive-grid">
+   <div class="device">
+    <div class="device-head"><span>AZIMUTE <span style="color:#39B9E4">ONE</span> / TABLET</span><span>13:45 · GNSS ●</span></div>
+    <div class="tablet-screen">
+     <div class="mini-map"><svg viewBox="0 0 500 300" preserveAspectRatio="xMidYMid slice"><rect width="500" height="300" fill="#DCEFF8"/><path d="M0 0H135L122 37 147 62 120 95 137 120 101 150 112 184 80 211 90 245 52 270 60 300H0Z" fill="#F3EEDC" stroke="#9DBBCB" stroke-width="2"/><path d="M150 -20Q200 30 170 90T200 190T180 320M220 -20Q270 30 240 90T270 190T250 320M300 -20Q350 30 320 90T350 190T330 320M380 -20Q430 30 400 90T430 190T410 320" fill="none" stroke="#8FC4E2" stroke-width="1.5"/><path d="M250 280Q270 220 300 160T380 35" fill="none" stroke="#B65AD9" stroke-width="2.5" stroke-dasharray="7 6"/><path d="m278 172 10 27-10-6-10 6Z" fill="#0B2A44" stroke="white" stroke-width="2"/><text x="20" y="190" font-size="13" fill="#42677D">Cascais</text><text x="180" y="70" font-size="12" fill="#42677D">18</text><text x="330" y="220" font-size="12" fill="#42677D">32</text></svg></div>
+     <div class="mini-metrics"><div class="mini-metric"><small>SOG</small><b>6.4 kn</b></div><div class="mini-metric"><small>COG</small><b>128°</b></div><div class="mini-metric"><small>DEPTH</small><b>24.6 m</b></div><div class="mini-metric"><small>WIND TWS</small><b>18.2 kn</b></div></div>
+    </div>
+   </div>
+   <div class="device phone">
+    <div class="device-head"><span>AZIMUTE <span style="color:#39B9E4">ONE</span></span><span>☰</span></div>
+    <div class="phone-screen"><div class="phone-map"><svg viewBox="0 0 260 330" preserveAspectRatio="xMidYMid slice"><rect width="260" height="330" fill="#DCEFF8"/><path d="M0 0H100L90 38 110 63 83 95 95 124 70 155 80 183 55 213 64 245 37 276 45 330H0Z" fill="#F3EEDC" stroke="#9DBBCB" stroke-width="2"/><path d="M110 -20Q150 30 125 90T150 190T130 350M160 -20Q200 30 175 90T200 190T180 350M210 -20Q250 30 225 90T250 190T230 350" fill="none" stroke="#8FC4E2" stroke-width="1.3"/><path d="M100 290Q120 220 145 160T210 30" fill="none" stroke="#B65AD9" stroke-width="2" stroke-dasharray="6 5"/><path d="m145 158 10 27-10-6-10 6Z" fill="#0B2A44" stroke="white" stroke-width="2"/><text x="12" y="180" font-size="11" fill="#42677D">Cascais</text><text x="150" y="80" font-size="11" fill="#42677D">18</text></svg></div><div class="phone-cards"><div class="phone-card"><small>SOG</small><b>6.4 kn</b></div><div class="phone-card"><small>COG</small><b>128°</b></div><div class="phone-card"><small>DEPTH</small><b>24.6 m</b></div><div class="phone-card"><small>WIND</small><b>18.2 kn</b></div></div><div class="bottomnav"><span>▣ Chart</span><span>⌁ Routes</span><span>☰ More</span></div></div>
+   </div>
+  </div>
+ </section>
+
+ <section class="section">
+  <div class="sectionhead"><div><div class="eyebrow">06 / Design principles</div><h2>Rules that protect clarity</h2></div></div>
+  <div class="two-col">
+   <div class="panel subpanel"><h3>Do</h3><ul style="padding-left:18px;margin:0;color:#355064;display:grid;gap:8px"><li>Keep the chart as the dominant visual surface.</li><li>Use dark navy for application chrome and pale blue/sand for the map itself.</li><li>Make current, stale, invalid, and unavailable data visually distinct.</li><li>Use large touch targets and clear icon/label combinations.</li><li>Respect the selected chart engine's standard portrayal rules.</li></ul></div>
+   <div class="panel subpanel"><h3>Don't</h3><ul style="padding-left:18px;margin:0;color:#355064;display:grid;gap:8px"><li>Don't apply the UI palette indiscriminately to chart objects.</li><li>Don't use colour alone to communicate alarms or target categories.</li><li>Don't let panels obscure critical chart detail.</li><li>Don't treat this illustrative chart as real chart data.</li><li>Don't claim production readiness before target-device testing.</li></ul></div>
+  </div>
+ </section>
+ <footer class="footer"><span>AZIMUTE ONE · Design system demo v0.1 · Illustrative data only</span><span>Project docs: <a href="../architecture/vision.md">Architecture Vision</a> · <a href="../roadmap.md">Roadmap</a> · <a href="design-system.md">Design System</a></span></footer>
+</main>
+<script>
+(function(){
+ const toast=document.getElementById('toast');
+ let toastTimer;
+ function notify(message){toast.textContent=message;toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),2200);}
+ document.querySelectorAll('.navitem').forEach(btn=>btn.addEventListener('click',()=>{
+  document.querySelectorAll('.navitem').forEach(n=>n.classList.remove('active'));btn.classList.add('active');
+  const view=btn.dataset.view;
+  if(view==='Chart'){notify('Chart view selected');return}
+  notify(view+' view selected · concept preview');
+ }));
+ document.querySelectorAll('[data-layer]').forEach(btn=>btn.addEventListener('click',()=>{
+  const layer=btn.dataset.layer;const active=btn.getAttribute('aria-pressed')!=='true';
+  btn.setAttribute('aria-pressed',String(active));btn.classList.toggle('selected',active);
+  const ids={depth:'.contour, .depth',route:'#routeLine, #routeMarks',track:'#trackLine',ais:'.buoy'};
+  document.querySelectorAll(ids[layer]).forEach(el=>el.style.display=active?'':'none');
+  notify((active?'Showing ':'Hiding ')+layer+' overlay');
+ }));
+ const map=document.getElementById('mainChart');let zoom=1;
+ function setZoom(next){zoom=Math.max(.85,Math.min(1.5,next));map.style.transform='scale('+zoom+')';map.style.transformOrigin='50% 50%';notify('Illustrative chart zoom · '+Math.round(zoom*100)+'%');}
+ document.getElementById('zoomIn').addEventListener('click',()=>setZoom(zoom+.1));
+ document.getElementById('zoomOut').addEventListener('click',()=>setZoom(zoom-.1));
+ document.getElementById('recenter').addEventListener('click',()=>{zoom=1;map.style.transform='scale(1)';notify('Chart recentered on own ship');});
+ let darkMap=false;
+ document.getElementById('mapThemeBtn').addEventListener('click',()=>{
+  darkMap=!darkMap;
+  map.style.filter=darkMap?'brightness(.42) saturate(.9) hue-rotate(8deg)':'none';
+  document.getElementById('mapLabel').textContent=darkMap?'DARK CHART PREVIEW · DEMO DATA':'LIGHT CHART · DEMO DATA';
+  notify(darkMap?'Dark chart preview enabled':'Light chart palette restored');
+ });
+ const toggle=document.getElementById('demoToggle');
+ toggle.addEventListener('click',()=>{const active=toggle.getAttribute('aria-checked')!=='true';toggle.setAttribute('aria-checked',String(active));document.getElementById('routeLine').style.display=active?'':'none';document.getElementById('routeMarks').style.display=active?'':'none';notify('Route overlay '+(active?'enabled':'disabled'));});
+ document.getElementById('themeSelect').addEventListener('change',e=>{
+  const demo=document.querySelector('.demo-shell');
+  if(e.target.value==='light'){demo.style.filter='brightness(1.13)';notify('Light UI sample preview · chart unchanged');}
+  else{demo.style.filter='none';notify('Dark instrument frame restored');}
+ });
+ document.getElementById('primaryDemo').addEventListener('click',()=>notify('Primary action · example interaction'));
+ document.getElementById('secondaryDemo').addEventListener('click',()=>notify('Secondary action · example interaction'));
+ document.getElementById('quietDemo').addEventListener('click',()=>notify('Quiet action · example interaction'));
+ document.getElementById('dangerDemo').addEventListener('click',()=>notify('Demo only · route was not cleared'));
+})();
+</script>
+</body>
+</html>
