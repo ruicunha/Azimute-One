@@ -23,7 +23,7 @@ The first engineering milestone is to validate the chart-rendering and chart-dat
 
 ## Architecture
 
-Read the [Architecture Vision](docs/architecture/vision.md) for system boundaries, technology candidates, chart compatibility requirements, and open decisions. The [Roadmap](docs/roadmap.md) describes the phased feasibility and delivery plan.
+Read the [Architecture Vision](docs/architecture/vision.md) for system boundaries, technology candidates, chart compatibility requirements, and open decisions. The [Roadmap](docs/roadmap.md) describes the phased feasibility and delivery plan. The [Brand and UI Design System](docs/brand/design-system.md) records the agreed logo direction, colour tokens, chart palette, typography, layouts, and component guidelines.
 
 ## Important note
 
