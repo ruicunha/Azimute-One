@@ -114,6 +114,102 @@ Track recording and alarm evaluation should have service/API boundaries independ
 
 The exact process boundaries and alarm guarantees require validation during the prototype stage.
 
+### Architecture diagrams
+
+These diagrams communicate the proposed boundaries and flows; they are conceptual, not a finalized deployment specification. The chart-engine choice and exact process boundaries remain open until the feasibility phase.
+
+#### Logical component view
+
+```mermaid
+flowchart TB
+    User[Helmsperson] --> UI[Touchscreen UI<br/>React + TypeScript]
+    UI <--> API[Navigation API<br/>HTTP + WebSocket]
+
+    API <--> Core[Navigation core<br/>Routes, geometry, ETA]
+    API <--> Store[(Application state<br/>SQLite)]
+    API <--> Charts[Chart service<br/>Chart adapter boundary]
+    Charts --> Datasets[(Offline chart datasets)]
+    Charts --> Cache[(Regenerable render cache)]
+
+    Marine[Onboard instruments<br/>GNSS · heading · depth · wind · AIS]
+    Marine --> SK[Signal K Server<br/>and protocol adapters]
+    SK --> API
+
+    API --> Recorder[Track recorder]
+    API --> Alarms[Alarm evaluation]
+
+    classDef candidate stroke-dasharray: 5 5
+    class Charts,Core,Recorder,Alarms candidate
+```
+
+The UI talks to the application through stable APIs. Marine data arrives through Signal K and protocol adapters; chart rendering is isolated behind an adapter so the underlying engine can be changed after evaluation. Dashed outlines indicate components whose final boundaries are still provisional.
+
+#### Live-data flow
+
+```mermaid
+sequenceDiagram
+    participant Sensors as Onboard instruments
+    participant SK as Signal K / adapters
+    participant API as Navigation API
+    participant Core as Navigation core
+    participant UI as Touchscreen UI
+    participant Alarm as Alarm evaluation
+
+    Sensors->>SK: Measurements and updates
+    SK->>API: Normalized values + available metadata
+    API->>API: Validate and track freshness
+    API->>UI: Stream vessel state and status
+    API->>Core: Relevant navigation state
+    Core-->>API: Derived navigation values
+    API->>UI: Updated values and validity
+    API->>Alarm: State changes and thresholds
+    Alarm-->>API: Alarm events
+    API-->>UI: Alarm status and notifications
+```
+
+The sequence is illustrative. Exact interfaces and whether alarm evaluation runs in a separate process are decisions for the prototype. Values should retain timestamps, source information where available, and validity/freshness so missing or stale data is not presented as current.
+
+#### Raspberry Pi appliance view
+
+```mermaid
+flowchart TB
+    subgraph Device["Raspberry Pi 5 appliance"]
+        Display[7–10 inch touchscreen]
+        Kiosk[Chromium kiosk]
+        UI[Local web UI]
+        API[Local navigation API]
+        SK[Signal K and data adapters]
+        Chart[Chart service]
+        Core[Navigation calculations]
+        DB[(SQLite application data)]
+        Charts[(Local chart datasets)]
+        Cache[(Regenerable cache)]
+        Logs[(Logs and diagnostics)]
+        OS[Linux base + systemd]
+        Update[Controlled update and rollback]
+    end
+
+    Display <--> Kiosk
+    Kiosk --> UI
+    UI <--> API
+    API <--> SK
+    API <--> Chart
+    API <--> Core
+    API <--> DB
+    Chart --> Charts
+    Chart --> Cache
+    OS -. supervises .-> Kiosk
+    OS -. supervises .-> API
+    OS -. supervises .-> SK
+    OS -. supervises .-> Chart
+    API --> Logs
+    Update --> OS
+```
+
+The appliance is intended to work locally without a cloud dependency. Persistent user data and installed charts are kept separate from regenerable cache and versioned application releases. The precise service split, update mechanism, and storage layout will be validated during appliance hardening.
+
+---
+
 ## 5. Conceptual repository structure
 
 This is a proposed future layout for discussion only. **Do not create this project skeleton yet.** The immediate deliverable is architecture documentation and feasibility decisions.
