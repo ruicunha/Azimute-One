@@ -90,7 +90,11 @@ Use a chart adapter boundary so the application can evaluate and potentially rep
 
 Raster formats to investigate include KAP/BSB and GeoTIFF, alongside practical offline tile packaging such as MBTiles where suitable. Vector ENC support requires more than drawing features: S-57 data ingestion and S-52 portrayal rules, including scale-dependent display and safety-relevant features, need explicit evaluation. S-63 encrypted chart support is a separate technical and licensing milestone.
 
-The project must not claim support for a chart format until its rendering, portrayal, coordinate handling, and licensing have been validated.
+**OpenCPN chart compatibility is a product requirement.** The goal is to let users reuse existing chart directories and datasets without unnecessary duplication or conversion. Format names alone do not prove compatibility: the chart engine, portrayal, projections, plugins, encryption, licensing, and vendor restrictions all matter.
+
+The feasibility assessment should classify each candidate format as: (1) supported through a reusable engine or library, (2) supported through an adapter or port, (3) dependent on a vendor-authorized integration, or (4) unsupported/deferred with the reason documented. Priority candidates include BSB/KAP raster charts, S-57 ENC with appropriate S-52 portrayal, GeoTIFF, MBTiles where suitable, and commonly used OpenCPN legacy or plugin-provided chart sources. CM93, S-63, O-Charts, NV, and other proprietary/encrypted formats require individual technical and legal review; no compatibility promise should be made before validation.
+
+Chart import should ideally reference user-selected chart directories rather than copy large collections. The application should index chart coverage and metadata, report unsupported datasets clearly, and preserve the original files. The project must not claim support for a chart format until its rendering, portrayal, coordinate handling, and licensing have been validated.
 
 ### Navigation core
 
@@ -322,16 +326,18 @@ Performance targets should be measured and agreed on after the target hardware a
 
 ## 9. Delivery roadmap
 
-### Phase 0 — Chart-engine feasibility
+### Phase 0 — Chart and integration feasibility
 
 Before building the application skeleton:
-1. Render at least one suitable offline raster chart on the target Raspberry Pi/display.
-2. Investigate S-57 ENC ingestion and the practical requirements for S-52 portrayal.
-3. Evaluate OpenCPN subsystem reuse, dependencies, integration cost, and licence implications.
-4. Benchmark pan/zoom responsiveness, memory, and startup behaviour.
-5. Record the chosen approach and rejected alternatives in an Architecture Decision Record (ADR).
+1. Create a chart compatibility inventory based on the formats and chart sources OpenCPN users are likely to already have.
+2. Test real sample datasets for priority raster and vector formats on the target Raspberry Pi/display; evaluate S-57 ingestion and S-52 portrayal rather than treating vector decoding alone as sufficient.
+3. Investigate OpenCPN chart subsystem and plugin reuse, dependencies, integration cost, licences, and whether chart directories can be reused without conversion or duplication.
+4. Create an integration inventory for marine protocols and hardware-facing features. Prefer Signal K as the standard marine-data integration boundary, and investigate OpenCPN/Signal K source implementations, drivers, protocol adapters, simulators, recorded data, and test fixtures.
+5. For each integration, document supported models/protocols, ARM64/Raspberry Pi suitability, reuse approach, licence and vendor restrictions, test assets, and what still requires physical hardware.
+6. Benchmark chart pan/zoom, memory, startup, and representative live-data replay.
+7. Record decisions, rejected alternatives, compatibility gaps, and hardware dependencies in Architecture Decision Records (ADRs).
 
-**Exit criterion:** a documented chart strategy backed by a working prototype and a clear list of limitations.
+**Exit criterion:** a documented chart compatibility matrix and integration feasibility inventory, plus a working chart proof of concept on the target hardware. Any unsupported chart or hardware integration must have an explicit reason and an agreed disposition.
 
 ### Phase 1 — UI foundation
 
