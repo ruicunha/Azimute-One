@@ -117,6 +117,8 @@ export default function App() {
         'sample-chart.zip': '/noaa-chart',
         'sample-chart-inner-harbor.zip': '/noaa-inner-harbor',
         'sample-chart-chs.zip': '/chs-sample',
+        'sample-chart-new-york-approaches.zip': '/noaa-ny-approaches',
+        'sample-chart-new-york-harbor.zip': '/noaa-ny-harbor',
       };
       const url = import.meta.env.DEV
         ? developmentUrls[chart.asset]
