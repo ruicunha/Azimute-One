@@ -36,32 +36,6 @@ function findCell(bytes: Uint8Array, filename: string): { name: string; bytes: U
 }
 
 
-function getGeoJSONBounds(geojson: unknown): maplibregl.LngLatBoundsLike | null {
-  let west = Infinity;
-  let south = Infinity;
-  let east = -Infinity;
-  let north = -Infinity;
-
-  const visit = (value: unknown): void => {
-    if (!Array.isArray(value)) return;
-    if (typeof value[0] === 'number' && typeof value[1] === 'number') {
-      const lng = value[0] as number;
-      const lat = value[1] as number;
-      west = Math.min(west, lng);
-      south = Math.min(south, lat);
-      east = Math.max(east, lng);
-      north = Math.max(north, lat);
-      return;
-    }
-    value.forEach(visit);
-  };
-
-  const features = (geojson as { features?: Array<{ geometry?: { coordinates?: unknown } }> }).features ?? [];
-  features.forEach((feature) => visit(feature.geometry?.coordinates));
-  if (!Number.isFinite(west) || !Number.isFinite(south) || !Number.isFinite(east) || !Number.isFinite(north)) return null;
-  return [[west, south], [east, north]];
-}
-
 export default function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -72,6 +46,7 @@ export default function App() {
   const [source, setSource] = useState('Natural Earth overview');
   const autoLoadAttempted = useRef(false);
   const automaticSampleLoaded = useRef(false);
+  const automaticCell = useRef<string | null>(null);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -146,14 +121,9 @@ export default function App() {
       buffer: 0,
     });
     addChartLayers(map, 'enc');
-    // Automatic Boston loading preserves the current camera. When a chart is
-    // selected manually, fit its extent so charts from other regions are visible.
-    if (!automatic) {
-      const bounds = getGeoJSONBounds(geojson);
-      if (bounds) map.fitBounds(bounds, { padding: 48, maxZoom: 10, duration: 0 });
-    }
-
+    // Never change the camera during automatic scale-band chart replacement.
     automaticSampleLoaded.current = automatic;
+    automaticCell.current = automatic ? cell.name : null;
     setChartName(cell.name);
     setFeatureCount(null);
     setSource(sourceLabel);
@@ -161,42 +131,22 @@ export default function App() {
     setMessage('ENC loaded. Pan and zoom to explore the chart.');
   }, []);
 
-  const loadSample = useCallback(async () => {
+  const loadSample = useCallback(async (cellName: 'US5MA12M' | 'US5MA11M' = 'US5MA12M') => {
     try {
       setStatus('loading');
-      setMessage('Loading NOAA test chart…');
-      // GitHub Pages is static, so the workflow places the sample ZIP in public/.
-      // Local development uses Vite's proxy to avoid cross-origin restrictions.
-      const chartUrl = import.meta.env.DEV ? '/noaa-chart' : `${import.meta.env.BASE_URL}sample-chart.zip`;
+      setMessage(`Loading NOAA ${cellName === 'US5MA11M' ? 'Boston Inner Harbor' : 'Boston Harbor'} ENC…`);
+      // GitHub Pages bundles both scale bands. Local development uses Vite's proxy.
+      const isInnerHarbor = cellName === 'US5MA11M';
+      const chartUrl = import.meta.env.DEV
+        ? (isInnerHarbor ? '/noaa-inner-harbor' : '/noaa-chart')
+        : `${import.meta.env.BASE_URL}${isInnerHarbor ? 'sample-chart-inner-harbor.zip' : 'sample-chart.zip'}`;
       const response = await fetch(chartUrl);
       if (!response.ok) throw new Error(`NOAA chart download failed (HTTP ${response.status}).`);
       const bytes = new Uint8Array(await response.arrayBuffer());
-      await renderCell(bytes, 'US5MA12M.zip', import.meta.env.DEV ? 'Official NOAA ENC download' : 'Bundled NOAA sample', true);
+      await renderCell(bytes, `${cellName}.zip`, import.meta.env.DEV ? 'Official NOAA ENC download' : 'Bundled NOAA sample', true);
     } catch (error) {
       setStatus('error');
       setMessage(error instanceof Error ? error.message : 'Could not load the NOAA chart.');
-    }
-  }, [renderCell]);
-
-
-
-  const loadTestChart = useCallback(async (kind: 'noaa-small-scale' | 'chs-sample') => {
-    const isNoaa = kind === 'noaa-small-scale';
-    const label = isNoaa ? 'NOAA small-scale ENC' : 'CHS sample ENC (fictitious test data)';
-    const url = import.meta.env.DEV
-      ? (isNoaa ? '/noaa-small-scale' : '/chs-sample')
-      : `${import.meta.env.BASE_URL}${isNoaa ? 'sample-chart-small-scale.zip' : 'sample-chart-chs.zip'}`;
-    try {
-      setStatus('loading');
-      setMessage(`Loading ${label}…`);
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`${label} download failed (HTTP ${response.status}).`);
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      await renderCell(bytes, isNoaa ? 'US1GC09M.zip' : '9995_S57ENC.zip', label, false);
-      if (!isNoaa) setMessage('CHS sample loaded. This chart uses fictitious test data and is not for navigation.');
-    } catch (error) {
-      setStatus('error');
-      setMessage(error instanceof Error ? error.message : `Could not load ${label}.`);
     }
   }, [renderCell]);
 
@@ -208,37 +158,38 @@ export default function App() {
       const center = map.getCenter();
       const inBostonRegion =
         center.lng >= -85 && center.lng <= -55 && center.lat >= 25 && center.lat <= 50;
-      const detailedScale = map.getZoom() >= 5;
+      const zoom = map.getZoom();
       const viewport = map.getBounds();
-      // Approximate extent of the bundled US5MA12M Boston Harbor cell.
+      // Approximate coverage of the Boston Harbor ENC area; unload chart data
+      // as soon as the viewport leaves the area or zooms out to the world view.
       const intersectsBostonCell =
         viewport.getWest() <= -70.73 &&
         viewport.getEast() >= -71.08 &&
         viewport.getSouth() <= 42.34 &&
         viewport.getNorth() >= 42.21;
 
-      // Do not keep a detailed ENC source and its generated tiles around when its
-      // scale is too small or its coverage no longer intersects the viewport.
-      // The sample is fetched and parsed again only if the user returns.
-      if (automaticSampleLoaded.current && (!detailedScale || !intersectsBostonCell)) {
-        removeChart(map, 'enc');
-        automaticSampleLoaded.current = false;
-        autoLoadAttempted.current = false;
-        setStatus('idle');
-        setChartName('World overview');
-        setFeatureCount(null);
-        setSource('Natural Earth overview');
-        setMessage('World overview ready. Zoom into Boston to load the detailed NOAA ENC automatically.');
+      if (!inBostonRegion || zoom < 5 || !intersectsBostonCell) {
+        if (automaticSampleLoaded.current) {
+          removeChart(map, 'enc');
+          automaticSampleLoaded.current = false;
+          automaticCell.current = null;
+          autoLoadAttempted.current = false;
+          setStatus('idle');
+          setChartName('World overview');
+          setFeatureCount(null);
+          setSource('Natural Earth overview');
+          setMessage('World overview ready. Zoom into Boston to load the appropriate NOAA ENC automatically.');
+        }
         return;
       }
 
-      if (autoLoadAttempted.current || status === 'loading' || status === 'ready') return;
-      // This proof of concept currently has one detailed ENC cell (Boston Harbor).
-      // Trigger it only when the user zooms into its region; elsewhere keep the overview.
-      if (detailedScale && inBostonRegion) {
-        autoLoadAttempted.current = true;
-        void loadSample();
-      }
+      // Use the broader Boston Harbor cell at medium zoom and the more detailed
+      // Inner Harbor cell when zoomed in. Both cover the same Boston area.
+      const desiredCell = zoom >= 7 ? 'US5MA11M' : 'US5MA12M';
+      if (status === 'loading') return;
+      if (automaticSampleLoaded.current && automaticCell.current === desiredCell) return;
+      autoLoadAttempted.current = true;
+      void loadSample(desiredCell);
     };
 
     map.on('moveend', onMoveEnd);
@@ -274,7 +225,7 @@ export default function App() {
         <aside className="sidebar">
           <p className="eyebrow">VECTOR ENC EXPERIMENT</p>
           <h1>Chart rendering</h1>
-          <p className="intro">A global overview with automatic loading of a detailed S-57 ENC when zooming into its coverage area.</p>
+          <p className="intro">A global overview with automatic ENC scale switching over Boston: Boston Harbor at medium zoom and Boston Inner Harbor at close zoom.</p>
 
           <div className="status-card">
             <div className={`status-dot ${status}`} />
@@ -303,14 +254,8 @@ export default function App() {
               onChange={(event) => void onFile(event.target.files?.[0])}
             />
           </label>
-          <button className="secondary-button" onClick={() => void loadSample()} disabled={status === 'loading'}>
-            Load NOAA Boston Harbor
-          </button>
-          <button className="secondary-button" onClick={() => void loadTestChart('noaa-small-scale')} disabled={status === 'loading'}>
-            Load NOAA small-scale ENC
-          </button>
-          <button className="secondary-button" onClick={() => void loadTestChart('chs-sample')} disabled={status === 'loading'}>
-            Load CHS test ENC
+          <button className="secondary-button" onClick={() => void loadSample('US5MA12M')} disabled={status === 'loading'}>
+            Load Boston Harbor test chart
           </button>
 
           <div className="legend">
@@ -321,7 +266,6 @@ export default function App() {
               <li>Buoys, lights and navigation marks</li>
               <li>Labels while panning and zooming</li>
               <li>Rendering at different chart scales</li>
-              <li>Differences between hydrographic offices</li>
             </ul>
           </div>
 
@@ -342,7 +286,7 @@ export default function App() {
           <div className="map-wrap" ref={mapContainer} />
           <div className="map-footer">
             <span>Natural Earth overview + MapLibre S-57 layers</span>
-            <span>Samples: NOAA · CHS test data</span>
+            <span>NOAA scale-band test: Boston Harbor · Inner Harbor</span>
           </div>
         </section>
       </section>
