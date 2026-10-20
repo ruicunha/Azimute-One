@@ -100,23 +100,35 @@ export default function App() {
     map.addLayer(overlay);
 
     const geojson = toGeoJSON(dataset);
-    const positions: number[][] = [];
-    const collectPositions = (value: unknown): void => {
+    // Keep only the bounds while traversing coordinates. Storing every position
+    // and spreading the resulting arrays into Math.min/max can exceed the JS
+    // argument limit on real ENC cells with large geometries.
+    let minLongitude = Infinity;
+    let minLatitude = Infinity;
+    let maxLongitude = -Infinity;
+    let maxLatitude = -Infinity;
+
+    const collectBounds = (value: unknown): void => {
       if (!Array.isArray(value)) return;
       if (value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number') {
-        positions.push([value[0], value[1]]);
+        minLongitude = Math.min(minLongitude, value[0]);
+        minLatitude = Math.min(minLatitude, value[1]);
+        maxLongitude = Math.max(maxLongitude, value[0]);
+        maxLatitude = Math.max(maxLatitude, value[1]);
         return;
       }
-      value.forEach(collectPositions);
+      value.forEach(collectBounds);
     };
+
     geojson.features.forEach((feature) => {
-      if (feature.geometry && 'coordinates' in feature.geometry) collectPositions(feature.geometry.coordinates);
+      if (feature.geometry && 'coordinates' in feature.geometry) {
+        collectBounds(feature.geometry.coordinates);
+      }
     });
-    if (positions.length > 0) {
-      const longitudes = positions.map((position) => position[0]);
-      const latitudes = positions.map((position) => position[1]);
+
+    if (Number.isFinite(minLongitude) && Number.isFinite(minLatitude)) {
       map.fitBounds(
-        [[Math.min(...longitudes), Math.min(...latitudes)], [Math.max(...longitudes), Math.max(...latitudes)]],
+        [[minLongitude, minLatitude], [maxLongitude, maxLatitude]],
         { padding: 60, maxZoom: 13, duration: 500 },
       );
     }
