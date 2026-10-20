@@ -127,7 +127,7 @@ export default function App() {
     setFeatureCount(null);
     setSource(sourceLabel);
     setStatus('ready');
-    setMessage('ENC loaded. ENC loaded. Pan and zoom to explore the chart.');
+    setMessage('ENC loaded. Pan and zoom to explore the chart.');
   }, []);
 
   const loadSample = useCallback(async () => {
@@ -202,7 +202,7 @@ export default function App() {
           <div className="status-card">
             <div className={`status-dot ${status}`} />
             <div>
-              <strong>{status === 'ready' ? 'Chart loaded' : status === 'error' ? 'Load failed' : status === 'loading' ? 'Loading chart' : 'Waiting'}</strong>
+              <strong>{status === 'ready' ? 'Chart loaded' : status === 'error' ? 'Load failed' : status === 'loading' ? 'Loading chart' : 'Overview ready'}</strong>
               <p>{message}</p>
             </div>
           </div>
