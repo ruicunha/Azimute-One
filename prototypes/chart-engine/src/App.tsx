@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
-import { S57CanvasLayer } from '@s57-parser/maplibre';
+import { addChartSource, removeChart } from '@s57-parser/maplibre';
 import { unzipSync } from 'fflate';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
@@ -42,7 +42,6 @@ export default function App() {
   const [chartName, setChartName] = useState('NOAA US5MA12M');
   const [featureCount, setFeatureCount] = useState<number | null>(null);
   const [source, setSource] = useState('NOAA sample');
-  const layerRef = useRef<S57CanvasLayer | null>(null);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -79,24 +78,16 @@ export default function App() {
       await new Promise<void>((resolve) => map.once('load', () => resolve()));
     }
 
-    if (layerRef.current && map.getLayer('enc-s52-overlay')) {
-      map.removeLayer('enc-s52-overlay');
-    }
-    layerRef.current = null;
+    // Use MapLibre's native GeoJSON source/layers for the first visible rendering
+    // path. The experimental canvas overlay was not reliably visible in this setup
+    // and adds another full rendering pass over the ENC.
+    removeChart(map, 'enc');
+    addChartSource(map, buffer, { sourceId: 'enc' });
+    map.fitBounds(
+      [[-71.08, 42.21], [-70.73, 42.34]],
+      { padding: 36, maxZoom: 13, duration: 0 },
+    );
 
-    if (map.getSource('enc')) {
-      for (const layer of map.getStyle().layers ?? []) {
-        if (layer.id.startsWith('enc')) map.removeLayer(layer.id);
-      }
-      map.removeSource('enc');
-    }
-
-    const overlay = new S57CanvasLayer('enc-s52-overlay', buffer);
-    layerRef.current = overlay;
-    map.addLayer(overlay);
-
-    // Keep the initial Boston Harbor viewport for now. Converting the entire ENC
-    // to GeoJSON solely to calculate bounds duplicates a large dataset in memory.
     setChartName(cell.name);
     setFeatureCount(null);
     setSource(sourceLabel);
@@ -180,7 +171,7 @@ export default function App() {
             />
           </label>
           <button className="secondary-button" onClick={() => void loadSample()} disabled={status === 'loading'}>
-            Reload NOAA sample
+            Load NOAA sample
           </button>
 
           <div className="legend">
