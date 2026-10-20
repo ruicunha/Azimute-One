@@ -47,12 +47,12 @@ jobs:
 
       - name: Download additional S-57 test charts
         run: |
-          curl --fail --location --retry 3 \\
-            https://charts.noaa.gov/ENCs/US1GC09M.zip \\
+          curl --fail --location --retry 3 \
+            https://charts.noaa.gov/ENCs/US1GC09M.zip \
             --output prototypes/chart-engine/public/sample-chart-small-scale.zip
           unzip -t prototypes/chart-engine/public/sample-chart-small-scale.zip
-          curl --fail --location --retry 3 \\
-            https://www.chs.gc.ca/documents/charts-cartes/instruction-formation/9995_S57ENC.zip \\
+          curl --fail --location --retry 3 \
+            https://www.chs.gc.ca/documents/charts-cartes/instruction-formation/9995_S57ENC.zip \
             --output prototypes/chart-engine/public/sample-chart-chs.zip
           unzip -t prototypes/chart-engine/public/sample-chart-chs.zip
 
