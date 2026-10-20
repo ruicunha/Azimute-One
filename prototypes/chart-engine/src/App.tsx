@@ -112,7 +112,9 @@ export default function App() {
       }
       value.forEach(collectPositions);
     };
-    geojson.features.forEach((feature) => collectPositions(feature.geometry.coordinates));
+    geojson.features.forEach((feature) => {
+      if (feature.geometry && 'coordinates' in feature.geometry) collectPositions(feature.geometry.coordinates);
+    });
     if (positions.length > 0) {
       const longitudes = positions.map((position) => position[0]);
       const latitudes = positions.map((position) => position[1]);
