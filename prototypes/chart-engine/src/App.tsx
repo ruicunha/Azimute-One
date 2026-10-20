@@ -39,10 +39,11 @@ export default function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [status, setStatus] = useState<Status>('idle');
-  const [message, setMessage] = useState('Map ready. Load the NOAA sample when you are ready.');
-  const [chartName, setChartName] = useState('NOAA US5MA12M');
+  const [message, setMessage] = useState('World overview ready. Zoom into Boston to load the detailed NOAA ENC automatically.');
+  const [chartName, setChartName] = useState('World overview');
   const [featureCount, setFeatureCount] = useState<number | null>(null);
-  const [source, setSource] = useState('NOAA sample');
+  const [source, setSource] = useState('Natural Earth overview');
+  const autoLoadAttempted = useRef(false);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -50,10 +51,31 @@ export default function App() {
     const map = new maplibregl.Map({
       container: mapContainer.current,
       style: emptyStyle,
-      center: [-70.95, 42.28],
-      zoom: 10,
-      minZoom: 3,
+      center: [0, 20],
+      zoom: 1.5,
+      minZoom: 1,
       maxZoom: 18,
+    });
+
+    map.on('load', () => {
+      // Lightweight, low-resolution land polygons provide a global overview.
+      // This is not an ENC; detailed S-57 coverage is loaded separately by scale/area.
+      map.addSource('world-land', {
+        type: 'geojson',
+        data: 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_land.geojson',
+      });
+      map.addLayer({
+        id: 'world-land-fill',
+        type: 'fill',
+        source: 'world-land',
+        paint: { 'fill-color': '#d9d6c8' },
+      });
+      map.addLayer({
+        id: 'world-land-outline',
+        type: 'line',
+        source: 'world-land',
+        paint: { 'line-color': '#9caa9d', 'line-width': 0.7 },
+      });
     });
 
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
@@ -105,7 +127,7 @@ export default function App() {
     setFeatureCount(null);
     setSource(sourceLabel);
     setStatus('ready');
-    setMessage('ENC loaded. Pan and zoom to explore the chart.');
+    setMessage('ENC loaded. ENC loaded. Pan and zoom to explore the chart.');
   }, []);
 
   const loadSample = useCallback(async () => {
@@ -126,6 +148,27 @@ export default function App() {
   }, [renderCell]);
 
 
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const onMoveEnd = () => {
+      if (autoLoadAttempted.current || status === 'loading' || status === 'ready') return;
+      const center = map.getCenter();
+      // This proof of concept currently has one detailed ENC cell (Boston Harbor).
+      // Trigger it only when the user zooms into its region; elsewhere keep the overview.
+      if (map.getZoom() >= 5 && center.lng >= -85 && center.lng <= -55 && center.lat >= 25 && center.lat <= 50) {
+        autoLoadAttempted.current = true;
+        void loadSample();
+      }
+    };
+
+    map.on('moveend', onMoveEnd);
+    return () => {
+      map.off('moveend', onMoveEnd);
+    };
+  }, [loadSample, status]);
 
   const onFile = async (file?: File) => {
     if (!file) return;
@@ -154,7 +197,7 @@ export default function App() {
         <aside className="sidebar">
           <p className="eyebrow">VECTOR ENC EXPERIMENT</p>
           <h1>Chart rendering</h1>
-          <p className="intro">A focused test of MapLibre GL JS with an S-57 chart and experimental S-52-style portrayal.</p>
+          <p className="intro">A global overview with automatic loading of a detailed S-57 ENC when zooming into its coverage area.</p>
 
           <div className="status-card">
             <div className={`status-dot ${status}`} />
@@ -206,15 +249,15 @@ export default function App() {
         <section className="chart-panel">
           <div className="chart-toolbar">
             <div>
-              <span className="eyebrow">NOAA · S-57 ENC</span>
+              <span className="eyebrow">GLOBAL OVERVIEW · S-57 DETAIL</span>
               <strong>{chartName}</strong>
             </div>
             <span className="source-label">{source}</span>
           </div>
           <div className="map-wrap" ref={mapContainer} />
           <div className="map-footer">
-            <span>MapLibre GL JS + @s57-parser/maplibre</span>
-            <span>Test area: Boston Harbor, Massachusetts</span>
+            <span>Natural Earth overview + MapLibre S-57 layers</span>
+            <span>Detailed ENC coverage: Boston Harbor only</span>
           </div>
         </section>
       </section>
