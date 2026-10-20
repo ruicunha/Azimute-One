@@ -68,6 +68,14 @@ h1 { margin: 0; color: #16313b; font-size: 25px; letter-spacing: -.04em; }
 .chart-toolbar strong { font-size: 13px; }
 .source-label { color: #6c858a; font-size: 10px; text-align: right; }
 .map-wrap { flex: 1; min-height: 180px; overflow: hidden; border: 1px solid #d8e2e2; background: #b9dce5; }
+
+/* Keep touch gestures inside the map instead of scrolling/panning the page. */
+.map-wrap,
+.map-wrap .maplibregl-canvas-container,
+.map-wrap .maplibregl-canvas {
+  touch-action: none;
+  overscroll-behavior: contain;
+}
 .map-footer { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; color: #6b8389; font-size: 10px; }
 .maplibregl-ctrl-group { border-radius: 8px !important; box-shadow: 0 2px 10px #173a461a !important; }
 
