@@ -9,8 +9,8 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
-    "@s57-parser/maplibre": "^0.1.1",
-    "@s57-parser/s57": "^0.1.1",
+    "@s57-parser/maplibre": "^0.3.0",
+    "@s57-parser/s57": "^0.3.0",
     "fflate": "^0.8.2",
     "maplibre-gl": "^5.24.0",
     "react": "^19.1.0",
