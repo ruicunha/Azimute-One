@@ -3,19 +3,14 @@ import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
 import { addChartLayers, removeChart } from '@s57-parser/maplibre';
 import { parseS57, toGeoJSON } from '@s57-parser/s57';
 import { unzipSync } from 'fflate';
+import { chartCatalog, selectChartsForViewport, type ChartDefinition } from './chart-catalog';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
 const emptyStyle: maplibregl.StyleSpecification = {
   version: 8,
   sources: {},
-  layers: [
-    {
-      id: 'water-background',
-      type: 'background',
-      paint: { 'background-color': '#b9dce5' },
-    },
-  ],
+  layers: [{ id: 'water-background', type: 'background', paint: { 'background-color': '#b9dce5' } }],
 };
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -23,34 +18,28 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 }
 
 function findCell(bytes: Uint8Array, filename: string): { name: string; bytes: Uint8Array } {
-  if (filename.toLowerCase().endsWith('.000')) {
-    return { name: filename, bytes };
-  }
-
+  if (filename.toLowerCase().endsWith('.000')) return { name: filename, bytes };
   const entries = unzipSync(bytes);
   const cellEntry = Object.entries(entries).find(([name]) => name.toLowerCase().endsWith('.000'));
-  if (!cellEntry) {
-    throw new Error('No .000 S-57 cell was found in that ZIP. Select an ENC exchange-set ZIP or a .000 file.');
-  }
+  if (!cellEntry) throw new Error('No .000 S-57 cell was found in that ZIP. Select an ENC exchange-set ZIP or a .000 file.');
   return { name: cellEntry[0].split('/').pop() ?? cellEntry[0], bytes: cellEntry[1] };
 }
-
 
 export default function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
+  const activeChartIds = useRef(new Set<string>());
+  const loadingChartIds = useRef(new Set<string>());
+  const desiredChartIds = useRef(new Set<string>());
   const [status, setStatus] = useState<Status>('idle');
-  const [message, setMessage] = useState('World overview ready. Zoom into Boston to load the detailed NOAA ENC automatically.');
+  const [message, setMessage] = useState('Overview ready. Pan and zoom to select charts from the catalogue.');
   const [chartName, setChartName] = useState('World overview');
   const [featureCount, setFeatureCount] = useState<number | null>(null);
   const [source, setSource] = useState('Natural Earth overview');
-  const autoLoadAttempted = useRef(false);
-  const automaticSampleLoaded = useRef(false);
-  const automaticCell = useRef<string | null>(null);
+  const [selectedCharts, setSelectedCharts] = useState<string[]>([]);
 
   useEffect(() => {
     if (!mapContainer.current) return;
-
     const map = new maplibregl.Map({
       container: mapContainer.current,
       style: emptyStyle,
@@ -61,148 +50,135 @@ export default function App() {
     });
 
     map.on('load', () => {
-      // Lightweight, low-resolution land polygons provide a global overview.
-      // This is not an ENC; detailed S-57 coverage is loaded separately by scale/area.
       map.addSource('world-land', {
         type: 'geojson',
         data: 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_land.geojson',
       });
-      map.addLayer({
-        id: 'world-land-fill',
-        type: 'fill',
-        source: 'world-land',
-        paint: { 'fill-color': '#d9d6c8' },
-      });
-      map.addLayer({
-        id: 'world-land-outline',
-        type: 'line',
-        source: 'world-land',
-        paint: { 'line-color': '#9caa9d', 'line-width': 0.7 },
-      });
+      map.addLayer({ id: 'world-land-fill', type: 'fill', source: 'world-land', paint: { 'fill-color': '#d9d6c8' } });
+      map.addLayer({ id: 'world-land-outline', type: 'line', source: 'world-land', paint: { 'line-color': '#9caa9d', 'line-width': 0.7 } });
     });
-
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'nautical' as never }), 'bottom-left');
     mapRef.current = map;
-
     return () => {
       map.remove();
       mapRef.current = null;
+      activeChartIds.current.clear();
+      loadingChartIds.current.clear();
+      desiredChartIds.current.clear();
     };
   }, []);
 
-  const renderCell = useCallback(async (input: Uint8Array, filename: string, sourceLabel: string, automatic = false) => {
+  const addChart = useCallback(async (
+    input: Uint8Array,
+    filename: string,
+    sourceLabel: string,
+    layerId: string,
+    isAutomatic: boolean,
+  ) => {
     const map = mapRef.current;
     if (!map) throw new Error('Map is not ready yet.');
-
-    setStatus('loading');
-    setMessage('Parsing S-57 cell…');
-
     const cell = findCell(input, filename);
-    const buffer = toArrayBuffer(cell.bytes);
-    if (!map.isStyleLoaded()) {
-      await new Promise<void>((resolve) => map.once('load', () => resolve()));
-    }
+    if (!map.isStyleLoaded()) await new Promise<void>((resolve) => map.once('load', resolve));
 
-    // Convert the cell once and feed MapLibre directly. The upstream addChartSource()
-    // repeats an O(n²) feature lookup to copy attributes that toGeoJSON() already adds;
-    // on larger ENC cells that needlessly blocks the main thread.
-    const dataset = parseS57(buffer);
+    const dataset = parseS57(toArrayBuffer(cell.bytes));
     const geojson = toGeoJSON(dataset);
+    const featureTotal = (geojson as { features?: unknown[] }).features?.length ?? null;
 
-    removeChart(map, 'enc');
-    map.addSource('enc', {
+    // A fetch may finish after the user has panned elsewhere. Do not add a
+    // chart that is no longer selected by the current viewport.
+    if (isAutomatic && !desiredChartIds.current.has(layerId)) return;
+    if (map.getSource(layerId)) removeChart(map, layerId);
+    map.addSource(layerId, {
       type: 'geojson',
       data: geojson as never,
-      // Simplify geometry slightly and stop generating increasingly detailed
-      // source tiles beyond this zoom; MapLibre can overzoom these tiles.
       tolerance: 1,
       maxzoom: 14,
       buffer: 0,
     });
-    addChartLayers(map, 'enc');
-    // Never change the camera during automatic scale-band chart replacement.
-    automaticSampleLoaded.current = automatic;
-    automaticCell.current = automatic ? cell.name : null;
-    setChartName(cell.name);
-    setFeatureCount(null);
+    addChartLayers(map, layerId);
+    activeChartIds.current.add(layerId);
+    setFeatureCount(featureTotal);
     setSource(sourceLabel);
+    setChartName(isAutomatic ? cell.name : cell.name);
     setStatus('ready');
-    setMessage('ENC loaded. Pan and zoom to explore the chart.');
+    setMessage(isAutomatic ? 'Chart selected from catalogue using viewport coverage and zoom range.' : 'ENC loaded. Pan and zoom to explore the chart.');
   }, []);
 
-  const loadSample = useCallback(async (cellName: 'US5MA12M' | 'US5MA11M' = 'US5MA12M') => {
+  const loadCatalogChart = useCallback(async (chart: ChartDefinition) => {
+    const layerId = `enc-${chart.id}`;
+    if (activeChartIds.current.has(layerId) || loadingChartIds.current.has(layerId)) return;
+    loadingChartIds.current.add(layerId);
+    setStatus('loading');
+    setMessage(`Loading ${chart.title}…`);
     try {
-      setStatus('loading');
-      setMessage(`Loading NOAA ${cellName === 'US5MA11M' ? 'Boston Inner Harbor' : 'Boston Harbor'} ENC…`);
-      // GitHub Pages bundles both scale bands. Local development uses Vite's proxy.
-      const isInnerHarbor = cellName === 'US5MA11M';
-      const chartUrl = import.meta.env.DEV
-        ? (isInnerHarbor ? '/noaa-inner-harbor' : '/noaa-chart')
-        : `${import.meta.env.BASE_URL}${isInnerHarbor ? 'sample-chart-inner-harbor.zip' : 'sample-chart.zip'}`;
-      const response = await fetch(chartUrl);
-      if (!response.ok) throw new Error(`NOAA chart download failed (HTTP ${response.status}).`);
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      await renderCell(bytes, `${cellName}.zip`, import.meta.env.DEV ? 'Official NOAA ENC download' : 'Bundled NOAA sample', true);
+      const url = `${import.meta.env.BASE_URL}${chart.asset}`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Could not load ${chart.title} (HTTP ${response.status}).`);
+      await addChart(new Uint8Array(await response.arrayBuffer()), chart.asset, 'Chart catalogue', layerId, true);
     } catch (error) {
-      setStatus('error');
-      setMessage(error instanceof Error ? error.message : 'Could not load the NOAA chart.');
+      if (desiredChartIds.current.has(layerId)) {
+        setStatus('error');
+        setMessage(error instanceof Error ? error.message : `Could not load ${chart.title}.`);
+      }
+    } finally {
+      loadingChartIds.current.delete(layerId);
+      if (loadingChartIds.current.size === 0 && desiredChartIds.current.size > 0) {
+        setStatus('ready');
+      }
     }
-  }, [renderCell]);
+  }, [addChart]);
+
+  const syncCharts = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    const bounds = map.getBounds();
+    const candidates = selectChartsForViewport(
+      chartCatalog,
+      { west: bounds.getWest(), south: bounds.getSouth(), east: bounds.getEast(), north: bounds.getNorth() },
+      map.getZoom(),
+    );
+    const nextIds = new Set(candidates.map((chart) => `enc-${chart.id}`));
+    desiredChartIds.current = nextIds;
+
+    // Remove cells outside the viewport/scale selection so chart data and
+    // layers are not retained after they are no longer needed.
+    for (const id of activeChartIds.current) {
+      if (!nextIds.has(id)) {
+        removeChart(map, id);
+        activeChartIds.current.delete(id);
+      }
+    }
+
+    setSelectedCharts(candidates.map((chart) => chart.title));
+    if (candidates.length === 0) {
+      setStatus('idle');
+      setChartName('World overview');
+      setFeatureCount(null);
+      setSource('Natural Earth overview');
+      setMessage('No catalogue chart matches this viewport and zoom. Showing the lightweight overview.');
+      return;
+    }
+
+    for (const chart of candidates) void loadCatalogChart(chart);
+  }, [loadCatalogChart]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-
-    const onMoveEnd = () => {
-      const center = map.getCenter();
-      const inBostonRegion =
-        center.lng >= -85 && center.lng <= -55 && center.lat >= 25 && center.lat <= 50;
-      const zoom = map.getZoom();
-      const viewport = map.getBounds();
-      // Approximate coverage of the Boston Harbor ENC area; unload chart data
-      // as soon as the viewport leaves the area or zooms out to the world view.
-      const intersectsBostonCell =
-        viewport.getWest() <= -70.73 &&
-        viewport.getEast() >= -71.08 &&
-        viewport.getSouth() <= 42.34 &&
-        viewport.getNorth() >= 42.21;
-
-      if (!inBostonRegion || zoom < 5 || !intersectsBostonCell) {
-        if (automaticSampleLoaded.current) {
-          removeChart(map, 'enc');
-          automaticSampleLoaded.current = false;
-          automaticCell.current = null;
-          autoLoadAttempted.current = false;
-          setStatus('idle');
-          setChartName('World overview');
-          setFeatureCount(null);
-          setSource('Natural Earth overview');
-          setMessage('World overview ready. Zoom into Boston to load the appropriate NOAA ENC automatically.');
-        }
-        return;
-      }
-
-      // Use the broader Boston Harbor cell at medium zoom and the more detailed
-      // Inner Harbor cell when zoomed in. Both cover the same Boston area.
-      const desiredCell = zoom >= 7 ? 'US5MA11M' : 'US5MA12M';
-      if (status === 'loading') return;
-      if (automaticSampleLoaded.current && automaticCell.current === desiredCell) return;
-      autoLoadAttempted.current = true;
-      void loadSample(desiredCell);
-    };
-
-    map.on('moveend', onMoveEnd);
+    map.on('moveend', syncCharts);
+    map.on('load', syncCharts);
     return () => {
-      map.off('moveend', onMoveEnd);
+      map.off('moveend', syncCharts);
+      map.off('load', syncCharts);
     };
-  }, [loadSample, status]);
+  }, [syncCharts]);
 
   const onFile = async (file?: File) => {
     if (!file) return;
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      await renderCell(bytes, file.name, 'Local file');
+      await addChart(bytes, file.name, 'Local file', 'enc-manual', false);
     } catch (error) {
       setStatus('error');
       setMessage(error instanceof Error ? error.message : 'Could not parse this ENC file.');
@@ -213,81 +189,38 @@ export default function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-mark">A</div>
-        <div className="brand-copy">
-          <strong>AZIMUTE ONE</strong>
-          <span>CHART ENGINE LAB</span>
-        </div>
+        <div className="brand-copy"><strong>AZIMUTE ONE</strong><span>CHART ENGINE LAB</span></div>
         <div className="topbar-spacer" />
         <span className="environment-pill">PHASE 0 · PROTOTYPE</span>
       </header>
-
       <section className="workspace">
         <aside className="sidebar">
           <p className="eyebrow">VECTOR ENC EXPERIMENT</p>
           <h1>Chart rendering</h1>
-          <p className="intro">A global overview with automatic ENC scale switching over Boston: Boston Harbor at medium zoom and Boston Inner Harbor at close zoom.</p>
-
+          <p className="intro">A data-driven chart collection. The engine selects cells by geographic coverage and zoom range, loads matching cells dynamically, and unloads cells that are no longer relevant.</p>
           <div className="status-card">
             <div className={`status-dot ${status}`} />
-            <div>
-              <strong>{status === 'ready' ? 'Chart loaded' : status === 'error' ? 'Load failed' : status === 'loading' ? 'Loading chart' : 'Overview ready'}</strong>
-              <p>{message}</p>
-            </div>
+            <div><strong>{status === 'ready' ? 'Chart loaded' : status === 'error' ? 'Load failed' : status === 'loading' ? 'Loading chart' : 'Overview ready'}</strong><p>{message}</p></div>
           </div>
-
           <div className="metric-grid">
-            <div className="metric">
-              <span>ENC CELL</span>
-              <strong>{chartName}</strong>
-            </div>
-            <div className="metric">
-              <span>FEATURES</span>
-              <strong>{featureCount === null ? '—' : featureCount.toLocaleString()}</strong>
-            </div>
+            <div className="metric"><span>VISIBLE CHARTS</span><strong>{selectedCharts.length}</strong></div>
+            <div className="metric"><span>FEATURES</span><strong>{featureCount === null ? '—' : featureCount.toLocaleString()}</strong></div>
           </div>
-
-          <label className="file-button">
-            <span>Load ENC file</span>
-            <input
-              type="file"
-              accept=".000,.zip,application/zip,application/octet-stream"
-              onChange={(event) => void onFile(event.target.files?.[0])}
-            />
-          </label>
-          <button className="secondary-button" onClick={() => void loadSample('US5MA12M')} disabled={status === 'loading'}>
-            Load Boston Harbor test chart
-          </button>
-
+          <div className="legend">
+            <span className="field-label">CATALOGUE MATCHES</span>
+            {selectedCharts.length ? <ul>{selectedCharts.map((title) => <li key={title}>{title}</li>)}</ul> : <p>No chart currently matches this viewport.</p>}
+          </div>
+          <label className="file-button"><span>Load ENC file</span><input type="file" accept=".000,.zip,application/zip,application/octet-stream" onChange={(event) => void onFile(event.target.files?.[0])} /></label>
           <div className="legend">
             <span className="field-label">WHAT TO INSPECT</span>
-            <ul>
-              <li>Coastline and land/water boundary</li>
-              <li>Depth areas, contours and soundings</li>
-              <li>Buoys, lights and navigation marks</li>
-              <li>Labels while panning and zooming</li>
-              <li>Rendering at different chart scales</li>
-            </ul>
+            <ul><li>Pan between chart coverage areas</li><li>Zoom through different scale ranges</li><li>Observe multiple cells when coverage overlaps</li><li>Check that off-screen chart layers are unloaded</li></ul>
           </div>
-
-          <div className="warning-note">
-            <strong>Not for navigation</strong>
-            <p>Experimental portrayal only. Do not use for real-world navigation or safety decisions.</p>
-          </div>
+          <div className="warning-note"><strong>Not for navigation</strong><p>Experimental portrayal only. Do not use for real-world navigation or safety decisions.</p></div>
         </aside>
-
         <section className="chart-panel">
-          <div className="chart-toolbar">
-            <div>
-              <span className="eyebrow">GLOBAL OVERVIEW · S-57 DETAIL</span>
-              <strong>{chartName}</strong>
-            </div>
-            <span className="source-label">{source}</span>
-          </div>
+          <div className="chart-toolbar"><div><span className="eyebrow">CATALOGUE-DRIVEN VIEWPORT SELECTION</span><strong>{chartName}</strong></div><span className="source-label">{source}</span></div>
           <div className="map-wrap" ref={mapContainer} />
-          <div className="map-footer">
-            <span>Natural Earth overview + MapLibre S-57 layers</span>
-            <span>NOAA scale-band test: Boston Harbor · Inner Harbor</span>
-          </div>
+          <div className="map-footer"><span>Natural Earth overview + dynamically selected S-57 layers</span><span>Chart definitions: src/chart-catalog.ts</span></div>
         </section>
       </section>
     </main>
