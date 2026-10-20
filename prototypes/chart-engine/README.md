@@ -44,16 +44,18 @@ https://ruicunha.github.io/Azimute-One/
 - `US5MA12M` — NOAA Boston Harbor.
 - `US5MA11M` — NOAA Boston Inner Harbor, configured for a closer zoom range.
 - `9995_S57ENC.zip` — Canadian Hydrographic Service fictitious training ENC.
+- `US4NY13M` — New York approaches candidate (configured at 1:80,000).
+- `US5NY14M` — New York Harbor candidate (configured at 1:20,000).
 - NOAA source: https://charts.noaa.gov/ENCs/ENCs.shtml
 - CHS training sample: https://www.chs.gc.ca/documents/charts-cartes/instruction-formation/9995_S57ENC.zip
 
-All four entries are restored to the catalogue and are evaluated by the same viewport selector. Their current footprints and zoom ranges are proof-of-concept metadata; the CHS sample uses a deliberately broad Canadian extent. They should be replaced with accurate per-cell coverage and compilation scale metadata (ideally generated from the chart collection) before any serious use.
+All six entries are evaluated by the same viewport selector. The New York charts are candidates for a same-area/different-scale test. Their current footprints and zoom ranges are proof-of-concept metadata; the CHS sample uses a deliberately broad Canadian extent. They should be replaced with accurate per-cell coverage and compilation scale metadata (ideally generated from the chart collection) before any serious use.
 
 ## Known limitations
 
 - This is a technology spike, not a complete chartplotter.
 - The upstream S-57 portrayal is simplified and not approved for primary navigation.
-- The sample collection covers only the Boston area; the engine can accept additional chart definitions, but this repository does not yet provide a global ENC collection.
+- The sample collection includes Boston, New York candidate charts, a Gulf overview, and a CHS training ENC; it is not a global ENC collection.
 - Catalogue metadata is currently maintained explicitly in TypeScript, not extracted from the ENC files.
 - No ENC updates, S-63 support, chart quilting rules, safety contour configuration, route planning, AIS, or alarm logic.
 - Compare the rendered result against OpenCPN with the same ENC and record portrayal differences.
