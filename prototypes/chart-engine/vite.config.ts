@@ -11,17 +11,11 @@ export default defineConfig({
         secure: true,
         rewrite: () => '/ENCs/US5MA12M.zip',
       },
-      '/noaa-small-scale': {
+      '/noaa-inner-harbor': {
         target: 'https://charts.noaa.gov',
         changeOrigin: true,
         secure: true,
-        rewrite: () => '/ENCs/US1GC09M.zip',
-      },
-      '/chs-sample': {
-        target: 'https://www.chs.gc.ca',
-        changeOrigin: true,
-        secure: true,
-        rewrite: () => '/documents/charts-cartes/instruction-formation/9995_S57ENC.zip',
+        rewrite: () => '/ENCs/US5MA11M.zip',
       },
     },
   },
