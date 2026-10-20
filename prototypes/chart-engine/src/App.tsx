@@ -3,7 +3,8 @@ import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
 import { addChartLayers, removeChart } from '@s57-parser/maplibre';
 import { parseS57, toGeoJSON } from '@s57-parser/s57';
 import { unzipSync } from 'fflate';
-import { chartCatalog, selectChartsForViewport, type ChartDefinition } from './chart-catalog';
+import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-catalog';
+import { planChartQuilt } from './chart-quilt';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -102,7 +103,7 @@ export default function App() {
     setSource(sourceLabel);
     setChartName(isAutomatic ? cell.name : cell.name);
     setStatus('ready');
-    setMessage(isAutomatic ? 'Chart selected from catalogue using viewport coverage and zoom range.' : 'ENC loaded. Pan and zoom to explore the chart.');
+    setMessage(isAutomatic ? 'Chart selected by the viewport quilt planner.' : 'ENC loaded. Pan and zoom to explore the chart.');
   }, []);
 
   const loadCatalogChart = useCallback(async (chart: ChartDefinition) => {
@@ -144,12 +145,14 @@ export default function App() {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
     const bounds = map.getBounds();
-    const candidates = selectChartsForViewport(
+    const quilt = planChartQuilt(
       chartCatalog,
       { west: bounds.getWest(), south: bounds.getSouth(), east: bounds.getEast(), north: bounds.getNorth() },
       map.getZoom(),
       map.getCenter().lat,
+      zoomForChartScale,
     );
+    const candidates = quilt.charts;
     const nextIds = new Set(candidates.map((chart) => `enc-${chart.id}`));
     desiredChartIds.current = nextIds;
 
@@ -168,7 +171,7 @@ export default function App() {
       setChartName('World overview');
       setFeatureCount(null);
       setSource('Natural Earth overview');
-      setMessage('No catalogue chart matches this viewport and zoom. Showing the lightweight overview.');
+      setMessage('No catalogue chart covers the sampled viewport. Showing the lightweight overview.');
       return;
     }
 
@@ -209,7 +212,7 @@ export default function App() {
         <aside className="sidebar">
           <p className="eyebrow">VECTOR ENC EXPERIMENT</p>
           <h1>Chart rendering</h1>
-          <p className="intro">A data-driven chart collection. The engine selects cells by geographic coverage and zoom range, loads matching cells dynamically, and unloads cells that are no longer relevant.</p>
+          <p className="intro">A data-driven chart collection. The engine chooses a reference chart by display scale, plans a coarse coverage quilt with fallback charts, loads the required cells, and unloads cells that are no longer relevant.</p>
           <div className="status-card">
             <div className={`status-dot ${status}`} />
             <div><strong>{status === 'ready' ? 'Chart loaded' : status === 'error' ? 'Load failed' : status === 'loading' ? 'Loading chart' : 'Overview ready'}</strong><p>{message}</p></div>
@@ -225,12 +228,12 @@ export default function App() {
           <label className="file-button"><span>Load ENC file</span><input type="file" accept=".000,.zip,application/zip,application/octet-stream" onChange={(event) => void onFile(event.target.files?.[0])} /></label>
           <div className="legend">
             <span className="field-label">WHAT TO INSPECT</span>
-            <ul><li>Pan between chart coverage areas</li><li>Zoom through different scale ranges</li><li>Observe multiple cells when coverage overlaps</li><li>Check that off-screen chart layers are unloaded</li></ul>
+            <ul><li>Pan between chart coverage areas</li><li>Zoom through different scale ranges</li><li>Observe the reference chart and fallback coverage cells</li><li>Check that off-screen chart layers are unloaded</li></ul>
           </div>
           <div className="warning-note"><strong>Not for navigation</strong><p>Experimental portrayal only. Do not use for real-world navigation or safety decisions.</p></div>
         </aside>
         <section className="chart-panel">
-          <div className="chart-toolbar"><div><span className="eyebrow">CATALOGUE-DRIVEN VIEWPORT SELECTION</span><strong>{chartName}</strong></div><span className="source-label">{source}</span></div>
+          <div className="chart-toolbar"><div><span className="eyebrow">REFERENCE SCALE + COVERAGE QUILT PLAN</span><strong>{chartName}</strong></div><span className="source-label">{source}</span></div>
           <div className="map-wrap" ref={mapContainer} />
           <div className="map-footer"><span>Natural Earth overview + dynamically selected S-57 layers</span><span>Chart definitions: src/chart-catalog.ts</span></div>
         </section>
