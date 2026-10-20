@@ -35,6 +35,33 @@ function findCell(bytes: Uint8Array, filename: string): { name: string; bytes: U
   return { name: cellEntry[0].split('/').pop() ?? cellEntry[0], bytes: cellEntry[1] };
 }
 
+
+function getGeoJSONBounds(geojson: unknown): maplibregl.LngLatBoundsLike | null {
+  let west = Infinity;
+  let south = Infinity;
+  let east = -Infinity;
+  let north = -Infinity;
+
+  const visit = (value: unknown): void => {
+    if (!Array.isArray(value)) return;
+    if (typeof value[0] === 'number' && typeof value[1] === 'number') {
+      const lng = value[0] as number;
+      const lat = value[1] as number;
+      west = Math.min(west, lng);
+      south = Math.min(south, lat);
+      east = Math.max(east, lng);
+      north = Math.max(north, lat);
+      return;
+    }
+    value.forEach(visit);
+  };
+
+  const features = (geojson as { features?: Array<{ geometry?: { coordinates?: unknown } }> }).features ?? [];
+  features.forEach((feature) => visit(feature.geometry?.coordinates));
+  if (!Number.isFinite(west) || !Number.isFinite(south) || !Number.isFinite(east) || !Number.isFinite(north)) return null;
+  return [[west, south], [east, north]];
+}
+
 export default function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -119,8 +146,12 @@ export default function App() {
       buffer: 0,
     });
     addChartLayers(map, 'enc');
-    // Keep the user's current camera. Automatic ENC loading must not snap
-    // the map back to Boston; the global overview should remain reachable by zooming out.
+    // Automatic Boston loading preserves the current camera. When a chart is
+    // selected manually, fit its extent so charts from other regions are visible.
+    if (!automatic) {
+      const bounds = getGeoJSONBounds(geojson);
+      if (bounds) map.fitBounds(bounds, { padding: 48, maxZoom: 10, duration: 0 });
+    }
 
     automaticSampleLoaded.current = automatic;
     setChartName(cell.name);
@@ -148,6 +179,26 @@ export default function App() {
   }, [renderCell]);
 
 
+
+  const loadTestChart = useCallback(async (kind: 'noaa-small-scale' | 'chs-sample') => {
+    const isNoaa = kind === 'noaa-small-scale';
+    const label = isNoaa ? 'NOAA small-scale ENC' : 'CHS sample ENC (fictitious test data)';
+    const url = import.meta.env.DEV
+      ? (isNoaa ? '/noaa-small-scale' : '/chs-sample')
+      : `${import.meta.env.BASE_URL}${isNoaa ? 'sample-chart-small-scale.zip' : 'sample-chart-chs.zip'}`;
+    try {
+      setStatus('loading');
+      setMessage(`Loading ${label}…`);
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`${label} download failed (HTTP ${response.status}).`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      await renderCell(bytes, isNoaa ? 'US1GC09M.zip' : '9995_S57ENC.zip', label, false);
+      if (!isNoaa) setMessage('CHS sample loaded. This chart uses fictitious test data and is not for navigation.');
+    } catch (error) {
+      setStatus('error');
+      setMessage(error instanceof Error ? error.message : `Could not load ${label}.`);
+    }
+  }, [renderCell]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -253,7 +304,13 @@ export default function App() {
             />
           </label>
           <button className="secondary-button" onClick={() => void loadSample()} disabled={status === 'loading'}>
-            Load NOAA sample
+            Load NOAA Boston Harbor
+          </button>
+          <button className="secondary-button" onClick={() => void loadTestChart('noaa-small-scale')} disabled={status === 'loading'}>
+            Load NOAA small-scale ENC
+          </button>
+          <button className="secondary-button" onClick={() => void loadTestChart('chs-sample')} disabled={status === 'loading'}>
+            Load CHS test ENC
           </button>
 
           <div className="legend">
@@ -263,6 +320,8 @@ export default function App() {
               <li>Depth areas, contours and soundings</li>
               <li>Buoys, lights and navigation marks</li>
               <li>Labels while panning and zooming</li>
+              <li>Rendering at different chart scales</li>
+              <li>Differences between hydrographic offices</li>
             </ul>
           </div>
 
@@ -283,7 +342,7 @@ export default function App() {
           <div className="map-wrap" ref={mapContainer} />
           <div className="map-footer">
             <span>Natural Earth overview + MapLibre S-57 layers</span>
-            <span>Detailed ENC coverage: Boston Harbor only</span>
+            <span>Samples: NOAA · CHS test data</span>
           </div>
         </section>
       </section>
