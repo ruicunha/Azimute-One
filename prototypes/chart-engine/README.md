@@ -6,17 +6,18 @@ This is an isolated Phase 0 experiment. It demonstrates chart selection from a c
 
 - Show a lightweight global land overview using Natural Earth data.
 - Maintain a chart collection in `src/chart-catalog.ts`. Each record describes an asset, geographic coverage, and ENC compilation scale.
-- Select every chart whose coverage intersects the viewport and whose compilation scale is suitable for the approximate display scale.
-- Load matching cells dynamically, including multiple cells when the viewport intersects more than one chart.
+- Choose a reference chart from viewport-centre coverage and approximate display scale.
+- Plan a coarse spatial quilt: use the reference chart where it covers the viewport samples and choose scale-appropriate fallback charts for uncovered samples.
+- Load the unique chart cells required by that quilt plan, including charts outside the reference chart's footprint.
 - Unload chart layers and their data when they are no longer selected.
 - Parse S-57 cells in the browser using `@s57-parser/s57` and render features through MapLibre GeoJSON sources/layers.
 - Load a local `.000` cell or exchange-set ZIP for manual inspection.
 
 ## How selection works
 
-The generic selector in `src/chart-catalog.ts` first checks each chart's geographic coverage against the viewport, then estimates the display scale from MapLibre zoom and the viewport centre latitude. It compares that estimate with the chart's ENC compilation scale and uses a one-zoom-level tolerance so adjacent scale bands overlap instead of switching abruptly. This allows all suitable charts with distinct footprints to be loaded together, rather than enforcing a single global zoom band.
+`src/chart-quilt.ts` first chooses a reference chart that covers the viewport centre and best matches the approximate display scale. It then samples a 7×7 grid across the viewport. Each sample uses the reference chart when covered, otherwise it assigns the scale-appropriate chart that covers that location. The engine loads the union of charts assigned across the grid, so smaller-scale fallback charts can remain selected where detailed charts do not cover the whole view. The scale estimate comes from `zoomForChartScale` in `src/chart-catalog.ts`.
 
-The display-scale calculation assumes 96 CSS DPI and is an approximation, not a calibrated physical scale. Coverage bounds and compilation scales remain explicit prototype metadata and are not yet extracted automatically from ENC metadata. The next step is to populate them from the actual ENC cells or an index generated from a chart collection.
+The display-scale calculation assumes 96 CSS DPI and is an approximation, not a calibrated physical scale. Coverage is currently represented by approximate catalogue bounding boxes, and the quilt plan uses grid samples rather than exact coverage polygons. The current MapLibre renderer still draws each selected chart's full GeoJSON layer; it does not clip each chart to its assigned quilt region, so overlapping features can still be duplicated. A complete quilt requires real ENC coverage polygons and per-chart portrayal clipping/masking, plus validated metadata extracted from the ENC cells.
 
 The global Natural Earth layer is only an overview and is not an ENC.
 
@@ -57,7 +58,7 @@ All six entries are evaluated by the same viewport selector. The New York charts
 - The upstream S-57 portrayal is simplified and not approved for primary navigation.
 - The sample collection includes Boston, New York candidate charts, a Gulf overview, and a CHS training ENC; it is not a global ENC collection.
 - Catalogue metadata is currently maintained explicitly in TypeScript, not extracted from the ENC files.
-- No ENC updates, S-63 support, chart quilting rules, safety contour configuration, route planning, AIS, or alarm logic.
+- Quilting is currently a coarse selection plan, not full OpenCPN-style per-area portrayal clipping. No ENC updates, S-63 support, safety contour configuration, route planning, AIS, or alarm logic.
 - Compare the rendered result against OpenCPN with the same ENC and record portrayal differences.
 
 ## Dependencies
