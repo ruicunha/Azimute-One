@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
-import { addChartSource, removeChart } from '@s57-parser/maplibre';
+import { addChartLayers, removeChart } from '@s57-parser/maplibre';
+import { parseS57, toGeoJSON } from '@s57-parser/s57';
 import { unzipSync } from 'fflate';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
@@ -78,11 +79,23 @@ export default function App() {
       await new Promise<void>((resolve) => map.once('load', () => resolve()));
     }
 
-    // Use MapLibre's native GeoJSON source/layers for the first visible rendering
-    // path. The experimental canvas overlay was not reliably visible in this setup
-    // and adds another full rendering pass over the ENC.
+    // Convert the cell once and feed MapLibre directly. The upstream addChartSource()
+    // repeats an O(n²) feature lookup to copy attributes that toGeoJSON() already adds;
+    // on larger ENC cells that needlessly blocks the main thread.
+    const dataset = parseS57(buffer);
+    const geojson = toGeoJSON(dataset);
+
     removeChart(map, 'enc');
-    addChartSource(map, buffer, { sourceId: 'enc' });
+    map.addSource('enc', {
+      type: 'geojson',
+      data: geojson as never,
+      // Simplify geometry slightly and stop generating increasingly detailed
+      // source tiles beyond this zoom; MapLibre can overzoom these tiles.
+      tolerance: 1,
+      maxzoom: 14,
+      buffer: 0,
+    });
+    addChartLayers(map, 'enc');
     map.fitBounds(
       [[-71.08, 42.21], [-70.73, 42.34]],
       { padding: 36, maxZoom: 13, duration: 0 },
