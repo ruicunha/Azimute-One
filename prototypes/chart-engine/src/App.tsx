@@ -42,7 +42,7 @@ export default function App() {
   const [message, setMessage] = useState('Starting chart viewer…');
   const [chartName, setChartName] = useState('NOAA US5MA12M');
   const [featureCount, setFeatureCount] = useState<number | null>(null);
-  const [source, setSource] = useState('NOAA download');
+  const [source, setSource] = useState('NOAA sample');
   const layerRef = useRef<S57CanvasLayer | null>(null);
 
   useEffect(() => {
@@ -79,12 +79,10 @@ export default function App() {
     const buffer = toArrayBuffer(cell.bytes);
     const dataset = parseS57(buffer);
 
-    // Wait until the base style is ready before attaching chart sources/layers.
     if (!map.isStyleLoaded()) {
       await new Promise<void>((resolve) => map.once('load', () => resolve()));
     }
 
-    // Remove the previous chart overlay before loading another cell.
     if (layerRef.current && map.getLayer('enc-s52-overlay')) {
       map.removeLayer('enc-s52-overlay');
     }
@@ -134,11 +132,14 @@ export default function App() {
   const loadSample = useCallback(async () => {
     try {
       setStatus('loading');
-      setMessage('Downloading NOAA test chart…');
-      const response = await fetch('/noaa-chart');
+      setMessage('Loading NOAA test chart…');
+      // GitHub Pages is static, so the workflow places the sample ZIP in public/.
+      // Local development uses Vite's proxy to avoid cross-origin restrictions.
+      const chartUrl = import.meta.env.DEV ? '/noaa-chart' : `${import.meta.env.BASE_URL}sample-chart.zip`;
+      const response = await fetch(chartUrl);
       if (!response.ok) throw new Error(`NOAA chart download failed (HTTP ${response.status}).`);
       const bytes = new Uint8Array(await response.arrayBuffer());
-      await renderCell(bytes, 'US5MA12M.zip', 'Official NOAA ENC download');
+      await renderCell(bytes, 'US5MA12M.zip', import.meta.env.DEV ? 'Official NOAA ENC download' : 'Bundled NOAA sample');
     } catch (error) {
       setStatus('error');
       setMessage(error instanceof Error ? error.message : 'Could not load the NOAA chart.');
@@ -160,7 +161,6 @@ export default function App() {
       setMessage(error instanceof Error ? error.message : 'Could not parse this ENC file.');
     }
   };
-
 
   return (
     <main className="app-shell">
