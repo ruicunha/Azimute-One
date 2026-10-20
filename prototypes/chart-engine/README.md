@@ -6,7 +6,7 @@ This is a deliberately isolated Phase 0 experiment. It does not create the Azimu
 
 - Show a lightweight global land overview using Natural Earth data.
 - Automatically load a real NOAA S-57 ENC exchange set for Boston Harbor (cell `US5MA12M`) when zooming into that region.
-- Manually load a NOAA small-scale ENC (`US1GC09M`) to test broader coverage and a Canadian Hydrographic Service S-57 sample (`9995_S57ENC`) to test another producer's data. The CHS sample is fictitious and must not be used for navigation.
+- Automatically switch between two overlapping Boston-area NOAA S-57 cells at different scales: Boston Harbor (`US5MA12M`) at medium zoom and Boston Inner Harbor (`US5MA11M`) at close zoom.
 - Parse the S-57 cell in the browser using `@s57-parser/s57`.
 - Render S-57 features through native MapLibre GeoJSON sources/layers, with experimental S-52-inspired styling.
 - Pan/zoom, inspect the number of parsed features, and load another locally downloaded `.000` cell or NOAA ZIP file.
@@ -25,7 +25,7 @@ npm run dev
 
 Open the local URL printed by Vite. The app starts at a global overview. Zoom into the Boston area (roughly zoom 5 or closer) to trigger the NOAA cell `US5MA12M` through a development-server proxy. Both the overview GeoJSON and the sample ENC require internet access.
 
-Use the chart buttons to compare the Boston Harbor NOAA cell, the NOAA small-scale chart, and the CHS test sample. Manually selected charts are fitted to their data extent. You can also use **Load ENC file** to select a local NOAA exchange-set ZIP or an extracted `.000` file. For a ZIP, the app selects the first `.000` cell it finds.
+The viewer automatically switches chart cells based on zoom while staying in Boston, and removes the ENC when zooming out or panning away. You can also use **Load ENC file** to select a local NOAA exchange-set ZIP or an extracted `.000` file. For a ZIP, the app selects the first `.000` cell it finds.
 
 ## GitHub Pages demo
 
@@ -48,7 +48,7 @@ GitHub Pages publishes the repository site at its root URL; the chart demo is th
 - This is a technology spike, not a complete chartplotter.
 - The S-52-style rendering in the upstream package is simplified and explicitly not approved for primary navigation.
 - S-63 encrypted cells are not supported by the upstream parser.
-- Global coverage is only a low-resolution Natural Earth land overview, not an S-57 chart. Boston Harbor remains the only automatically selected ENC; the other cells are loaded manually for renderer testing.
+- Global coverage is only a low-resolution Natural Earth land overview, not an S-57 chart. Automatic chart selection currently switches between two overlapping Boston-area cells by zoom band; the ENC is unloaded when the viewport leaves its coverage or zooms back out.
 - Automatic cell selection is a hard-coded Boston-area demonstration, not a general ENC catalogue/scale-band selector. Full global ENC coverage requires sourcing and licensing a worldwide portfolio of cells.
 - This POC does not yet implement chart updates, general scale-dependent cell selection, chart quilting, safety contour configuration, route planning, AIS, or alarm logic.
 - Compare the rendered result against OpenCPN with the same ENC. Record missing symbols, labels, depth portrayal, update handling, and performance.
