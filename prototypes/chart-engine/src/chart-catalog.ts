@@ -46,6 +46,26 @@ export const chartCatalog: ChartDefinition[] = [
     scaleDenominator: 5000,
   },
   {
+    id: 'new-york-approaches',
+    title: 'New York approaches — US4NY13M',
+    asset: 'sample-chart-new-york-approaches.zip',
+    // Approximate test bounds; validate against the ENC's own metadata.
+    coverage: [-74.25, 40.35, -73.55, 40.95],
+    minZoom: 4,
+    maxZoom: 7,
+    scaleDenominator: 80000,
+  },
+  {
+    id: 'new-york-harbor',
+    title: 'New York Harbor — US5NY14M',
+    asset: 'sample-chart-new-york-harbor.zip',
+    // Approximate test bounds; validate against the ENC's own metadata.
+    coverage: [-74.15, 40.45, -73.75, 40.85],
+    minZoom: 7,
+    maxZoom: 11,
+    scaleDenominator: 20000,
+  },
+  {
     id: 'chs-training',
     title: 'CHS fictitious training ENC',
     asset: 'sample-chart-chs.zip',
