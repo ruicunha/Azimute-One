@@ -56,6 +56,14 @@ jobs:
             https://www.chs.gc.ca/documents/charts-cartes/instruction-formation/9995_S57ENC.zip \
             --output prototypes/chart-engine/public/sample-chart-chs.zip
           unzip -t prototypes/chart-engine/public/sample-chart-chs.zip
+          curl --fail --location --retry 3 \
+            https://charts.noaa.gov/ENCs/US4NY13M.zip \
+            --output prototypes/chart-engine/public/sample-chart-new-york-approaches.zip
+          unzip -t prototypes/chart-engine/public/sample-chart-new-york-approaches.zip
+          curl --fail --location --retry 3 \
+            https://charts.noaa.gov/ENCs/US5NY14M.zip \
+            --output prototypes/chart-engine/public/sample-chart-new-york-harbor.zip
+          unzip -t prototypes/chart-engine/public/sample-chart-new-york-harbor.zip
 
       - name: Build site
         working-directory: prototypes/chart-engine
