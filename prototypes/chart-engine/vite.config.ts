@@ -23,6 +23,18 @@ export default defineConfig({
         secure: true,
         rewrite: () => '/ENCs/US1GC09M.zip',
       },
+      '/noaa-ny-approaches': {
+        target: 'https://charts.noaa.gov',
+        changeOrigin: true,
+        secure: true,
+        rewrite: () => '/ENCs/US4NY13M.zip',
+      },
+      '/noaa-ny-harbor': {
+        target: 'https://charts.noaa.gov',
+        changeOrigin: true,
+        secure: true,
+        rewrite: () => '/ENCs/US5NY14M.zip',
+      },
       '/chs-sample': {
         target: 'https://www.chs.gc.ca',
         changeOrigin: true,
