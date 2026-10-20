@@ -1,17 +1,24 @@
-# Chart-engine proof of concept: NOAA S-57 + MapLibre
+# Chart-engine proof of concept: viewport-driven NOAA S-57 + MapLibre
 
-This is a deliberately isolated Phase 0 experiment. It does not create the Azimute One application skeleton.
+This is an isolated Phase 0 experiment. It demonstrates chart selection from a collection of chart definitions, rather than hard-coded area/zoom logic.
 
 ## What it tests
 
 - Show a lightweight global land overview using Natural Earth data.
-- Automatically load a real NOAA S-57 ENC exchange set for Boston Harbor (cell `US5MA12M`) when zooming into that region.
-- Automatically switch between two overlapping Boston-area NOAA S-57 cells at different scales: Boston Harbor (`US5MA12M`) at medium zoom and Boston Inner Harbor (`US5MA11M`) at close zoom.
-- Parse the S-57 cell in the browser using `@s57-parser/s57`.
-- Render S-57 features through native MapLibre GeoJSON sources/layers, with experimental S-52-inspired styling.
-- Pan/zoom, inspect the number of parsed features, and load another locally downloaded `.000` cell or NOAA ZIP file.
+- Maintain a chart collection in `src/chart-catalog.ts`. Each record describes an asset, geographic coverage, and the zoom range for which it is suitable.
+- Select every chart whose coverage intersects the current viewport and whose scale range matches the current zoom.
+- Load matching cells dynamically, including multiple cells when the viewport intersects more than one chart.
+- Unload chart layers and their data when they are no longer selected.
+- Parse S-57 cells in the browser using `@s57-parser/s57` and render features through MapLibre GeoJSON sources/layers.
+- Load a local `.000` cell or exchange-set ZIP for manual inspection.
 
-The viewer is a feasibility prototype only. The upstream parser explicitly states that its portrayal is not a type-approved ECDIS renderer and is not suitable for primary navigation.
+## How selection works
+
+The generic selector in `src/chart-catalog.ts` evaluates each chart's `coverage`, `minZoom`, and `maxZoom` metadata against the viewport and current zoom. The application does not contain Boston-specific selection conditions. The two Boston entries are just sample records/assets to exercise overlapping coverage and different scales; adding another chart means adding a catalogue record, not changing the selection algorithm.
+
+Coverage bounds and zoom ranges are explicit prototype metadata. They are not yet extracted automatically from ENC metadata. A next step could populate the catalogue from chart metadata or an index generated from an ENC collection.
+
+The global Natural Earth layer is only an overview and is not an ENC.
 
 ## Run locally
 
@@ -23,36 +30,30 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. The app starts at a global overview. Zoom into the Boston area (roughly zoom 5 or closer) to trigger the NOAA cell `US5MA12M` through a development-server proxy. Both the overview GeoJSON and the sample ENC require internet access.
-
-The viewer automatically switches chart cells based on zoom while staying in Boston, and removes the ENC when zooming out or panning away. You can also use **Load ENC file** to select a local NOAA exchange-set ZIP or an extracted `.000` file. For a ZIP, the app selects the first `.000` cell it finds.
+Open the local URL printed by Vite. The hosted demo downloads the two sample chart ZIPs during the Pages build. Local ENC files can be selected with **Load ENC file**.
 
 ## GitHub Pages demo
 
-The GitHub Actions workflow builds this prototype and downloads the NOAA sample ZIP into the generated static site. The global overview is fetched from Natural Earth at runtime. The hosted demo therefore does not need a development proxy or a backend server. It still needs internet access to open the hosted website, and local ENC files can be selected with **Load ENC file**.
+The GitHub Actions workflow builds this prototype and downloads the sample NOAA ZIPs into the generated static site. After GitHub Pages is configured to use **GitHub Actions** in repository Settings → Pages, pushes to `poc/chart-engine-noaa-enc` deploy the demo at:
 
-After GitHub Pages is configured to use **GitHub Actions** in repository Settings → Pages, pushes to the `poc/chart-engine-noaa-enc` branch can deploy the demo at:
+https://ruicunha.github.io/Azimute-One/
 
-`https://ruicunha.github.io/Azimute-One/`
+## Sample chart collection
 
-GitHub Pages publishes the repository site at its root URL; the chart demo is the site entry point for this proof of concept.
-
-## Test chart
-
-- NOAA chart cell: `US5MA12M` (Boston Harbor).
+- `US5MA12M` — Boston Harbor sample, configured for zoom 5–7.
+- `US5MA11M` — Boston Inner Harbor sample, configured for zoom 7 and above.
 - Official source: https://charts.noaa.gov/ENCs/ENCs.shtml
-- The chart ZIP is downloaded during the Pages build and is not committed to this repository.
 
-## Known limitations / evaluation questions
+The zoom ranges and coverage bounds are test metadata and should be validated against authoritative ENC metadata before use beyond this proof of concept.
+
+## Known limitations
 
 - This is a technology spike, not a complete chartplotter.
-- The S-52-style rendering in the upstream package is simplified and explicitly not approved for primary navigation.
-- S-63 encrypted cells are not supported by the upstream parser.
-- Global coverage is only a low-resolution Natural Earth land overview, not an S-57 chart. Automatic chart selection currently switches between two overlapping Boston-area cells by zoom band; the ENC is unloaded when the viewport leaves its coverage or zooms back out.
-- Automatic cell selection is a hard-coded Boston-area demonstration, not a general ENC catalogue/scale-band selector. Full global ENC coverage requires sourcing and licensing a worldwide portfolio of cells.
-- This POC does not yet implement chart updates, general scale-dependent cell selection, chart quilting, safety contour configuration, route planning, AIS, or alarm logic.
-- Compare the rendered result against OpenCPN with the same ENC. Record missing symbols, labels, depth portrayal, update handling, and performance.
-- MapLibre's own vector rendering and the S-52-style canvas overlay are separate paths; test them independently if the combined rendering has issues.
+- The upstream S-57 portrayal is simplified and not approved for primary navigation.
+- The sample collection covers only the Boston area; the engine can accept additional chart definitions, but this repository does not yet provide a global ENC collection.
+- Catalogue metadata is currently maintained explicitly in TypeScript, not extracted from the ENC files.
+- No ENC updates, S-63 support, chart quilting rules, safety contour configuration, route planning, AIS, or alarm logic.
+- Compare the rendered result against OpenCPN with the same ENC and record portrayal differences.
 
 ## Dependencies
 
