@@ -24,9 +24,6 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    defaults:
-      run:
-        working-directory: prototypes/chart-engine
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,14 +32,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: prototypes/chart-engine/package.json
 
       - name: Install dependencies
+        working-directory: prototypes/chart-engine
         run: npm install
 
       - name: Download NOAA sample ENC
-        working-directory: .
         run: |
           mkdir -p prototypes/chart-engine/public
           curl --fail --location --retry 3 \
@@ -51,6 +46,7 @@ jobs:
           unzip -t prototypes/chart-engine/public/sample-chart.zip
 
       - name: Build site
+        working-directory: prototypes/chart-engine
         run: npm run build -- --base=/Azimute-One/
 
       - name: Configure GitHub Pages
