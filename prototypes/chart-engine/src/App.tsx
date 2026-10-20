@@ -158,11 +158,18 @@ export default function App() {
       const inBostonRegion =
         center.lng >= -85 && center.lng <= -55 && center.lat >= 25 && center.lat <= 50;
       const detailedScale = map.getZoom() >= 5;
+      const viewport = map.getBounds();
+      // Approximate extent of the bundled US5MA12M Boston Harbor cell.
+      const intersectsBostonCell =
+        viewport.getWest() <= -70.73 &&
+        viewport.getEast() >= -71.08 &&
+        viewport.getSouth() <= 42.34 &&
+        viewport.getNorth() >= 42.21;
 
       // Do not keep a detailed ENC source and its generated tiles around when its
-      // scale is too small or the user has panned away from its coverage area.
-      // The sample is fetched and parsed again only if the user zooms back in.
-      if (automaticSampleLoaded.current && (!detailedScale || !inBostonRegion)) {
+      // scale is too small or its coverage no longer intersects the viewport.
+      // The sample is fetched and parsed again only if the user returns.
+      if (automaticSampleLoaded.current && (!detailedScale || !intersectsBostonCell)) {
         removeChart(map, 'enc');
         automaticSampleLoaded.current = false;
         autoLoadAttempted.current = false;
