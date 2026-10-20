@@ -55,7 +55,6 @@ export default function App() {
       zoom: 10,
       minZoom: 3,
       maxZoom: 18,
-      attributionControl: true,
     });
 
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
