@@ -40,11 +40,14 @@ https://ruicunha.github.io/Azimute-One/
 
 ## Sample chart collection
 
-- `US5MA12M` — Boston Harbor sample, configured for zoom 5–7.
-- `US5MA11M` — Boston Inner Harbor sample, configured for zoom 7 and above.
-- Official source: https://charts.noaa.gov/ENCs/ENCs.shtml
+- `US1GC09M` — NOAA small-scale ENC, configured for low zoom over the Gulf of Mexico.
+- `US5MA12M` — NOAA Boston Harbor.
+- `US5MA11M` — NOAA Boston Inner Harbor, configured for a closer zoom range.
+- `9995_S57ENC.zip` — Canadian Hydrographic Service fictitious training ENC.
+- NOAA source: https://charts.noaa.gov/ENCs/ENCs.shtml
+- CHS training sample: https://www.chs.gc.ca/documents/charts-cartes/instruction-formation/9995_S57ENC.zip
 
-The zoom ranges and coverage bounds are test metadata and should be validated against authoritative ENC metadata before use beyond this proof of concept.
+All four entries are restored to the catalogue and are evaluated by the same viewport selector. Their current footprints and zoom ranges are proof-of-concept metadata; the CHS sample uses a deliberately broad Canadian extent. They should be replaced with accurate per-cell coverage and compilation scale metadata (ideally generated from the chart collection) before any serious use.
 
 ## Known limitations
 
