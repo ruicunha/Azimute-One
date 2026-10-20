@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
-import { addChartSource, S57CanvasLayer } from '@s57-parser/maplibre';
-import { parseS57, toGeoJSON } from '@s57-parser/s57';
+import { S57CanvasLayer } from '@s57-parser/maplibre';
 import { unzipSync } from 'fflate';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
@@ -38,8 +37,8 @@ function findCell(bytes: Uint8Array, filename: string): { name: string; bytes: U
 export default function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
-  const [status, setStatus] = useState<Status>('loading');
-  const [message, setMessage] = useState('Starting chart viewer…');
+  const [status, setStatus] = useState<Status>('idle');
+  const [message, setMessage] = useState('Map ready. Load the NOAA sample when you are ready.');
   const [chartName, setChartName] = useState('NOAA US5MA12M');
   const [featureCount, setFeatureCount] = useState<number | null>(null);
   const [source, setSource] = useState('NOAA sample');
@@ -76,8 +75,6 @@ export default function App() {
 
     const cell = findCell(input, filename);
     const buffer = toArrayBuffer(cell.bytes);
-    const dataset = parseS57(buffer);
-
     if (!map.isStyleLoaded()) {
       await new Promise<void>((resolve) => map.once('load', () => resolve()));
     }
@@ -94,47 +91,14 @@ export default function App() {
       map.removeSource('enc');
     }
 
-    addChartSource(map, buffer, { sourceId: 'enc' });
     const overlay = new S57CanvasLayer('enc-s52-overlay', buffer);
     layerRef.current = overlay;
     map.addLayer(overlay);
 
-    const geojson = toGeoJSON(dataset);
-    // Keep only the bounds while traversing coordinates. Storing every position
-    // and spreading the resulting arrays into Math.min/max can exceed the JS
-    // argument limit on real ENC cells with large geometries.
-    let minLongitude = Infinity;
-    let minLatitude = Infinity;
-    let maxLongitude = -Infinity;
-    let maxLatitude = -Infinity;
-
-    const collectBounds = (value: unknown): void => {
-      if (!Array.isArray(value)) return;
-      if (value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number') {
-        minLongitude = Math.min(minLongitude, value[0]);
-        minLatitude = Math.min(minLatitude, value[1]);
-        maxLongitude = Math.max(maxLongitude, value[0]);
-        maxLatitude = Math.max(maxLatitude, value[1]);
-        return;
-      }
-      value.forEach(collectBounds);
-    };
-
-    geojson.features.forEach((feature) => {
-      if (feature.geometry && 'coordinates' in feature.geometry) {
-        collectBounds(feature.geometry.coordinates);
-      }
-    });
-
-    if (Number.isFinite(minLongitude) && Number.isFinite(minLatitude)) {
-      map.fitBounds(
-        [[minLongitude, minLatitude], [maxLongitude, maxLatitude]],
-        { padding: 60, maxZoom: 13, duration: 500 },
-      );
-    }
-
+    // Keep the initial Boston Harbor viewport for now. Converting the entire ENC
+    // to GeoJSON solely to calculate bounds duplicates a large dataset in memory.
     setChartName(cell.name);
-    setFeatureCount(dataset.features.length);
+    setFeatureCount(null);
     setSource(sourceLabel);
     setStatus('ready');
     setMessage('ENC loaded. Pan and zoom to explore the chart.');
@@ -157,10 +121,7 @@ export default function App() {
     }
   }, [renderCell]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => void loadSample(), 0);
-    return () => window.clearTimeout(timer);
-  }, [loadSample]);
+
 
   const onFile = async (file?: File) => {
     if (!file) return;
