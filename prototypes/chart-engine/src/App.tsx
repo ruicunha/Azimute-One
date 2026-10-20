@@ -118,10 +118,8 @@ export default function App() {
       buffer: 0,
     });
     addChartLayers(map, 'enc');
-    map.fitBounds(
-      [[-71.08, 42.21], [-70.73, 42.34]],
-      { padding: 36, maxZoom: 13, duration: 0 },
-    );
+    // Keep the user's current camera. Automatic ENC loading must not snap
+    // the map back to Boston; the global overview should remain reachable by zooming out.
 
     setChartName(cell.name);
     setFeatureCount(null);
