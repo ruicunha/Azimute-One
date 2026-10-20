@@ -9,17 +9,27 @@ export type ChartDefinition = {
 };
 
 /**
- * Proof-of-concept chart collection.
+ * Test chart collection. The selector is generic: it only considers each
+ * record's footprint and zoom range, never chart names or provider.
  *
- * The selector reads coverage and scale ranges from these records; it does not
- * contain knowledge of Boston, NOAA, or any particular chart identifier.
- * Replace/add records to test other chart footprints and scale combinations.
- * maxZoom is exclusive so adjacent scale bands do not select both charts.
+ * Coverage boxes and zoom ranges are proof-of-concept metadata, not official
+ * navigational coverage. Replace them with footprints/compilation scales
+ * extracted from each ENC catalogue when moving beyond this test collection.
+ * maxZoom is exclusive.
  */
 export const chartCatalog: ChartDefinition[] = [
   {
+    id: 'noaa-gulf-overview',
+    title: 'NOAA small-scale ENC — Gulf of Mexico',
+    asset: 'sample-chart-small-scale.zip',
+    coverage: [-98.5, 18.0, -80.0, 31.5],
+    minZoom: 2,
+    maxZoom: 5,
+    scaleDenominator: 1200000,
+  },
+  {
     id: 'boston-harbor',
-    title: 'Boston Harbor (overview scale)',
+    title: 'Boston Harbor',
     asset: 'sample-chart.zip',
     coverage: [-71.30, 42.15, -70.55, 42.55],
     minZoom: 5,
@@ -28,12 +38,23 @@ export const chartCatalog: ChartDefinition[] = [
   },
   {
     id: 'boston-inner-harbor',
-    title: 'Boston Inner Harbor (larger scale)',
+    title: 'Boston Inner Harbor',
     asset: 'sample-chart-inner-harbor.zip',
     coverage: [-71.12, 42.25, -70.95, 42.40],
     minZoom: 7,
     maxZoom: 19,
     scaleDenominator: 5000,
+  },
+  {
+    id: 'chs-training',
+    title: 'CHS fictitious training ENC',
+    asset: 'sample-chart-chs.zip',
+    // Broad Canadian extent for selecting this test asset. Tighten this to
+    // the cell's actual extent when the catalogue is generated from the data.
+    coverage: [-141.0, 41.0, -52.0, 84.0],
+    minZoom: 4,
+    maxZoom: 11,
+    scaleDenominator: 50000,
   },
 ];
 
@@ -49,7 +70,6 @@ export function selectChartsForViewport(
       viewport.east >= west &&
       viewport.south <= north &&
       viewport.north >= south;
-    const scaleMatches = zoom >= chart.minZoom && zoom < chart.maxZoom;
-    return intersects && scaleMatches;
+    return intersects && zoom >= chart.minZoom && zoom < chart.maxZoom;
   });
 }
