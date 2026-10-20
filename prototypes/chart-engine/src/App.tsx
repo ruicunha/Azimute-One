@@ -148,6 +148,7 @@ export default function App() {
       chartCatalog,
       { west: bounds.getWest(), south: bounds.getSouth(), east: bounds.getEast(), north: bounds.getNorth() },
       map.getZoom(),
+      map.getCenter().lat,
     );
     const nextIds = new Set(candidates.map((chart) => `enc-${chart.id}`));
     desiredChartIds.current = nextIds;
