@@ -112,7 +112,16 @@ export default function App() {
     setStatus('loading');
     setMessage(`Loading ${chart.title}…`);
     try {
-      const url = `${import.meta.env.BASE_URL}${chart.asset}`;
+      const developmentUrls: Record<string, string> = {
+        'sample-chart-small-scale.zip': '/noaa-small-scale',
+        'sample-chart.zip': '/noaa-chart',
+        'sample-chart-inner-harbor.zip': '/noaa-inner-harbor',
+        'sample-chart-chs.zip': '/chs-sample',
+      };
+      const url = import.meta.env.DEV
+        ? developmentUrls[chart.asset]
+        : `${import.meta.env.BASE_URL}${chart.asset}`;
+      if (!url) throw new Error(`No chart URL configured for asset ${chart.asset}.`);
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Could not load ${chart.title} (HTTP ${response.status}).`);
       await addChart(new Uint8Array(await response.arrayBuffer()), chart.asset, 'Chart catalogue', layerId, true);
