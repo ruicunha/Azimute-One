@@ -44,6 +44,7 @@ export default function App() {
   const [featureCount, setFeatureCount] = useState<number | null>(null);
   const [source, setSource] = useState('Natural Earth overview');
   const autoLoadAttempted = useRef(false);
+  const automaticSampleLoaded = useRef(false);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -88,7 +89,7 @@ export default function App() {
     };
   }, []);
 
-  const renderCell = useCallback(async (input: Uint8Array, filename: string, sourceLabel: string) => {
+  const renderCell = useCallback(async (input: Uint8Array, filename: string, sourceLabel: string, automatic = false) => {
     const map = mapRef.current;
     if (!map) throw new Error('Map is not ready yet.');
 
@@ -121,6 +122,7 @@ export default function App() {
     // Keep the user's current camera. Automatic ENC loading must not snap
     // the map back to Boston; the global overview should remain reachable by zooming out.
 
+    automaticSampleLoaded.current = automatic;
     setChartName(cell.name);
     setFeatureCount(null);
     setSource(sourceLabel);
@@ -138,7 +140,7 @@ export default function App() {
       const response = await fetch(chartUrl);
       if (!response.ok) throw new Error(`NOAA chart download failed (HTTP ${response.status}).`);
       const bytes = new Uint8Array(await response.arrayBuffer());
-      await renderCell(bytes, 'US5MA12M.zip', import.meta.env.DEV ? 'Official NOAA ENC download' : 'Bundled NOAA sample');
+      await renderCell(bytes, 'US5MA12M.zip', import.meta.env.DEV ? 'Official NOAA ENC download' : 'Bundled NOAA sample', true);
     } catch (error) {
       setStatus('error');
       setMessage(error instanceof Error ? error.message : 'Could not load the NOAA chart.');
@@ -152,11 +154,30 @@ export default function App() {
     if (!map) return;
 
     const onMoveEnd = () => {
-      if (autoLoadAttempted.current || status === 'loading' || status === 'ready') return;
       const center = map.getCenter();
+      const inBostonRegion =
+        center.lng >= -85 && center.lng <= -55 && center.lat >= 25 && center.lat <= 50;
+      const detailedScale = map.getZoom() >= 5;
+
+      // Do not keep a detailed ENC source and its generated tiles around when its
+      // scale is too small or the user has panned away from its coverage area.
+      // The sample is fetched and parsed again only if the user zooms back in.
+      if (automaticSampleLoaded.current && (!detailedScale || !inBostonRegion)) {
+        removeChart(map, 'enc');
+        automaticSampleLoaded.current = false;
+        autoLoadAttempted.current = false;
+        setStatus('idle');
+        setChartName('World overview');
+        setFeatureCount(null);
+        setSource('Natural Earth overview');
+        setMessage('World overview ready. Zoom into Boston to load the detailed NOAA ENC automatically.');
+        return;
+      }
+
+      if (autoLoadAttempted.current || status === 'loading' || status === 'ready') return;
       // This proof of concept currently has one detailed ENC cell (Boston Harbor).
       // Trigger it only when the user zooms into its region; elsewhere keep the overview.
-      if (map.getZoom() >= 5 && center.lng >= -85 && center.lng <= -55 && center.lat >= 25 && center.lat <= 50) {
+      if (detailedScale && inBostonRegion) {
         autoLoadAttempted.current = true;
         void loadSample();
       }
