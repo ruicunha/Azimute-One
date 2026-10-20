@@ -37,20 +37,25 @@ jobs:
         working-directory: prototypes/chart-engine
         run: npm install
 
-      - name: Download NOAA sample ENC
+      - name: Download chart collection
         run: |
           mkdir -p prototypes/chart-engine/public
+          curl --fail --location --retry 3 \
+            https://charts.noaa.gov/ENCs/US1GC09M.zip \
+            --output prototypes/chart-engine/public/sample-chart-small-scale.zip
+          unzip -t prototypes/chart-engine/public/sample-chart-small-scale.zip
           curl --fail --location --retry 3 \
             https://charts.noaa.gov/ENCs/US5MA12M.zip \
             --output prototypes/chart-engine/public/sample-chart.zip
           unzip -t prototypes/chart-engine/public/sample-chart.zip
-
-      - name: Download detailed Boston Inner Harbor ENC
-        run: |
           curl --fail --location --retry 3 \
             https://charts.noaa.gov/ENCs/US5MA11M.zip \
             --output prototypes/chart-engine/public/sample-chart-inner-harbor.zip
           unzip -t prototypes/chart-engine/public/sample-chart-inner-harbor.zip
+          curl --fail --location --retry 3 \
+            https://www.chs.gc.ca/documents/charts-cartes/instruction-formation/9995_S57ENC.zip \
+            --output prototypes/chart-engine/public/sample-chart-chs.zip
+          unzip -t prototypes/chart-engine/public/sample-chart-chs.zip
 
       - name: Build site
         working-directory: prototypes/chart-engine
