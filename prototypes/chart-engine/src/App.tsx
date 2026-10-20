@@ -123,8 +123,8 @@ export default function App() {
       }
     } finally {
       loadingChartIds.current.delete(layerId);
-      if (loadingChartIds.current.size === 0 && desiredChartIds.current.size > 0) {
-        setStatus('ready');
+      if (loadingChartIds.current.size === 0 && desiredChartIds.current.size === 0) {
+        setStatus('idle');
       }
     }
   }, [addChart]);
