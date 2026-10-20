@@ -4,7 +4,7 @@ This is a deliberately isolated Phase 0 experiment. It does not create the Azimu
 
 ## What it tests
 
-- Load a real NOAA S-57 ENC exchange set (Boston Harbor, cell `US5MA12M`) from the official NOAA chart download endpoint.
+- Load a real NOAA S-57 ENC exchange set (Boston Harbor, cell `US5MA12M`).
 - Parse the S-57 cell in the browser using `@s57-parser/s57`.
 - Render through MapLibre GL JS with `@s57-parser/maplibre`, including its experimental S-52-style canvas overlay.
 - Pan/zoom, inspect the number of parsed features, and load another locally downloaded `.000` cell or NOAA ZIP file.
@@ -23,22 +23,23 @@ npm run dev
 
 Open the local URL printed by Vite. The app automatically loads NOAA cell `US5MA12M` through a development-server proxy. The first load needs internet access.
 
-You can also use **Load ENC file** to select a local NOAA exchange-set ZIP or an extracted `.000` file. For a ZIP, the app selects the first `.000` cell it finds. This allows testing with other cells without changing code.
+You can also use **Load ENC file** to select a local NOAA exchange-set ZIP or an extracted `.000` file. For a ZIP, the app selects the first `.000` cell it finds.
 
-To make a production build:
+## GitHub Pages demo
 
-```bash
-npm run build
-npm run preview
-```
+The GitHub Actions workflow builds this prototype and downloads the NOAA sample ZIP into the generated static site. The hosted demo therefore does not need a development proxy or a backend server. It still needs internet access to open the hosted website, and local ENC files can be selected with **Load ENC file**.
 
-The NOAA proxy exists only in the Vite development server; the production build is not a deployed offline appliance. For offline testing, use the local-file loader.
+After GitHub Pages is configured to use **GitHub Actions** in repository Settings → Pages, pushes to the `poc/chart-engine-noaa-enc` branch can deploy the demo at:
+
+`https://ruicunha.github.io/Azimute-One/`
+
+GitHub Pages publishes the repository site at its root URL; the chart demo is the site entry point for this proof of concept.
 
 ## Test chart
 
 - NOAA chart cell: `US5MA12M` (Boston Harbor).
 - Official source: https://charts.noaa.gov/ENCs/ENCs.shtml
-- The chart is fetched at runtime rather than committed to this repository.
+- The chart ZIP is downloaded during the Pages build and is not committed to this repository.
 
 ## Known limitations / evaluation questions
 
