@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
 import { addChartSource, S57CanvasLayer } from '@s57-parser/maplibre';
-import { parseS57 } from '@s57-parser/s57';
+import { parseS57, toGeoJSON } from '@s57-parser/s57';
 import { unzipSync } from 'fflate';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
@@ -43,7 +43,6 @@ export default function App() {
   const [chartName, setChartName] = useState('NOAA US5MA12M');
   const [featureCount, setFeatureCount] = useState<number | null>(null);
   const [source, setSource] = useState('NOAA download');
-  const [palette, setPalette] = useState<'DAY_BRIGHT' | 'DUSK' | 'NIGHT'>('DAY_BRIGHT');
   const layerRef = useRef<S57CanvasLayer | null>(null);
 
   useEffect(() => {
@@ -103,10 +102,22 @@ export default function App() {
     layerRef.current = overlay;
     map.addLayer(overlay);
 
-    const bounds = dataset.extent;
-    if (bounds && bounds.length === 4 && bounds.every(Number.isFinite)) {
+    const geojson = toGeoJSON(dataset);
+    const positions: number[][] = [];
+    const collectPositions = (value: unknown): void => {
+      if (!Array.isArray(value)) return;
+      if (value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number') {
+        positions.push([value[0], value[1]]);
+        return;
+      }
+      value.forEach(collectPositions);
+    };
+    geojson.features.forEach((feature) => collectPositions(feature.geometry.coordinates));
+    if (positions.length > 0) {
+      const longitudes = positions.map((position) => position[0]);
+      const latitudes = positions.map((position) => position[1]);
       map.fitBounds(
-        [[bounds[0], bounds[1]], [bounds[2], bounds[3]]],
+        [[Math.min(...longitudes), Math.min(...latitudes)], [Math.max(...longitudes), Math.max(...latitudes)]],
         { padding: 60, maxZoom: 13, duration: 500 },
       );
     }
@@ -148,18 +159,6 @@ export default function App() {
     }
   };
 
-  const changePalette = (next: 'DAY_BRIGHT' | 'DUSK' | 'NIGHT') => {
-    setPalette(next);
-    const map = mapRef.current;
-    const layer = layerRef.current;
-    if (!map || !layer) return;
-    // Replace the S-52 overlay so its palette is applied to the newly created layer.
-    if (map.getLayer('enc-s52-overlay')) map.removeLayer('enc-s52-overlay');
-    const replacement = new S57CanvasLayer('enc-s52-overlay', new ArrayBuffer(0), { mode: next });
-    // Recreate using the last selected chart buffer is handled by reloading the chart below.
-    // The button is intentionally disabled until palette support is verified against upstream API.
-    layerRef.current = replacement;
-  };
 
   return (
     <main className="app-shell">
@@ -209,24 +208,6 @@ export default function App() {
           <button className="secondary-button" onClick={() => void loadSample()} disabled={status === 'loading'}>
             Reload NOAA sample
           </button>
-
-          <div className="field-group">
-            <span className="field-label">DISPLAY PALETTE</span>
-            <div className="palette-row">
-              {(['DAY_BRIGHT', 'DUSK', 'NIGHT'] as const).map((item) => (
-                <button
-                  key={item}
-                  className={palette === item ? 'palette-button selected' : 'palette-button'}
-                  onClick={() => {
-                    setPalette(item);
-                    setMessage('Palette selection recorded; verify palette switching against the upstream renderer before relying on it.');
-                  }}
-                >
-                  {item === 'DAY_BRIGHT' ? 'Day' : item === 'DUSK' ? 'Dusk' : 'Night'}
-                </button>
-              ))}
-            </div>
-          </div>
 
           <div className="legend">
             <span className="field-label">WHAT TO INSPECT</span>
