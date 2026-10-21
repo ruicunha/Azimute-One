@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cm93ScaleForZoom, selectCm93ViewportCells } from './cm93-quilt.ts';
+import { cm93ScaleForZoom, mergeCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt.ts';
 
 function cell(scale, filename, path) {
   return { name: filename, webkitRelativePath: path, arrayBuffer: async () => new ArrayBuffer(0) };
@@ -88,4 +88,26 @@ test('does not truncate a detailed viewport at the old 180-cell limit', () => {
 
   assert.equal(result.files.length, 361);
   assert.equal(result.scaleCounts.G, 361);
+});
+
+
+test('retains previous-scale features for cells missing from the current quilt', () => {
+  const previousFine = {
+    type: 'Feature',
+    properties: { cm93Class: 'BOYLAT', cm93SourceCell: 'fine-cell.g' },
+    geometry: { type: 'Point', coordinates: [-9, 38] },
+  };
+  const previousCoarse = {
+    type: 'Feature',
+    properties: { cm93Class: 'DEPARE', cm93SourceCell: 'coarse-cell.c' },
+    geometry: { type: 'Polygon', coordinates: [[[-9, 38], [-8, 38], [-8, 39], [-9, 38]]] },
+  };
+  const current = {
+    type: 'Feature',
+    properties: { cm93Class: 'BOYLAT', cm93SourceCell: 'fine-cell.g' },
+    geometry: { type: 'Point', coordinates: [-9, 38] },
+  };
+
+  const merged = mergeCm93QuiltFeatures([current], [previousFine, previousCoarse], new Set(['fine-cell.g']));
+  assert.deepEqual(merged, [current, previousCoarse]);
 });
