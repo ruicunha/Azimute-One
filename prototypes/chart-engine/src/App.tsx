@@ -119,31 +119,6 @@ function cm93ClassIcon(name: string): string {
   return '•';
 }
 
-function addCm93PointLayer(map: MapLibreMap, source: string, layerId: string, visibleClasses: string[]): void {
-  map.addLayer({
-    id: layerId, type: 'symbol', source, minzoom: 3,
-    filter: ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', visibleClasses]]],
-    layout: {
-      'text-field': ['match', ['get', 'cm93Class'],
-        'LIGHTS', '✦',
-        'BCNCAR', '▲', 'BCNLAT', '△', 'BCNSAW', '○', 'BCNSPP', '◇',
-        'BOYCAR', '◆', 'BOYISD', '◆', 'BOYLAT', '◇', 'BOYSAW', '○',
-        'BOYSPP', '◇', 'BOYINB', '◇', 'LNDMRK', '▲', 'WRECKS', '×',
-        'UWTROC', '▲', '•'],
-      'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
-      'text-size': ['interpolate', ['linear'], ['zoom'], 3, 8, 8, 10, 13, 13, 16, 16],
-      'text-allow-overlap': false,
-      'text-ignore-placement': false,
-    },
-    paint: {
-      'text-color': ['match', ['get', 'cm93Class'],
-        'LIGHTS', '#d49a19', 'BCNCAR', '#d94b36', 'BOYCAR', '#d94b36',
-        'WRECKS', '#c43c35', 'UWTROC', '#c43c35', 'LNDMRK', '#8c5a36', '#327f9e'],
-      'text-halo-color': '#f7f4e9', 'text-halo-width': 1.1,
-    },
-  });
-}
-
 function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string, visiblePointClasses: string[]): void {
   map.addLayer({
     id: prefix + '-lines', type: 'line', source, minzoom: 2,
@@ -159,7 +134,6 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
       'line-opacity': ['match', ['get', 'cm93Class'], 'DEPCNT', 0.95, 0.82],
     },
   });
-  addCm93PointLayer(map, source, prefix + '-points', visiblePointClasses);
   map.addLayer({
     id: prefix + '-icons', type: 'symbol', source, minzoom: 3,
     filter: ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
@@ -878,7 +852,7 @@ export default function App() {
     const next = visibleCm93PointClassesRef.current.includes(name) ? visibleCm93PointClassesRef.current.filter((item) => item !== name) : [...visibleCm93PointClassesRef.current, name];
     visibleCm93PointClassesRef.current = next; setVisibleCm93PointClasses(next);
     const map = mapRef.current; if (!map) return;
-    for (const layerId of ['cm93-cell-points', 'cm93-quilt-points', 'cm93-cell-icons', 'cm93-quilt-icons']) if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+    for (const layerId of ['cm93-cell-icons', 'cm93-quilt-icons']) if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', next]]]);
   };
 
   const toggleCmapRaster = () => {
