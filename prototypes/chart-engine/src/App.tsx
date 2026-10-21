@@ -6,6 +6,7 @@ import { unzipSync } from 'fflate';
 import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-catalog';
 import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
+import { parseCm93Dictionaries } from './cm93-decoder';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -51,6 +52,7 @@ export default function App() {
   const [cmapMetadata, setCmapMetadata] = useState<RasterChartMetadata | null>(null);
   const [cmapVisible, setCmapVisible] = useState(false);
   const [cm93Summary, setCm93Summary] = useState<Cm93DatasetSummary | null>(null);
+  const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -248,20 +250,36 @@ export default function App() {
     cm93DirectoryInput.current?.setAttribute('directory', '');
   }, []);
 
-  const onCm93Directory = (files?: FileList | null) => {
+  const onCm93Directory = async (files?: FileList | null) => {
     if (!files?.length) return;
     try {
       const summary = inspectCm93Files(files);
+      const fileList = Array.from(files);
+      const findTextFile = async (name: string) => {
+        const file = fileList.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase());
+        return file ? file.text() : null;
+      };
+      const [objectDictionary, attributeDictionary] = await Promise.all([
+        findTextFile('CM93OBJ.DIC'),
+        findTextFile('CM93ATTR.DIC'),
+      ]);
+      let dictionaryStats: { objects: number; attributes: number } | null = null;
+      if (objectDictionary !== null && attributeDictionary !== null) {
+        const dictionary = parseCm93Dictionaries(objectDictionary, attributeDictionary);
+        dictionaryStats = { objects: dictionary.objectsByCode.size, attributes: dictionary.attributesByCode.size };
+      }
+      setCm93DictionaryStats(dictionaryStats);
       setCm93Summary(summary);
       setMessage(summary.isLikelyCm93V2
-        ? `CM93 V2 dataset recognized: ${summary.regionCount} regions and ${summary.fileCount.toLocaleString()} files. Binary chart decoding/rendering is the next implementation step.`
+        ? 'CM93 V2 dataset recognized: ' + summary.regionCount + ' regions, ' + summary.fileCount.toLocaleString() + ' files, ' + (dictionaryStats?.objects.toLocaleString() ?? 'unparsed') + ' object classes and ' + (dictionaryStats?.attributes.toLocaleString() ?? 'unparsed') + ' attributes in the dictionaries. Cell record decoding is still incomplete.'
         : 'The selected directory does not look like a complete CM93 V2 dataset. Review the validation details below.');
       setStatus(summary.isLikelyCm93V2 ? 'ready' : 'error');
-      setChartName(summary.isLikelyCm93V2 ? `CM93 V2 — ${summary.rootName}` : 'Unrecognized CM93 dataset');
+      setChartName(summary.isLikelyCm93V2 ? 'CM93 V2 — ' + summary.rootName : 'Unrecognized CM93 dataset');
       setSource('CM93 V2 directory');
       setFeatureCount(null);
     } catch (error) {
       setCm93Summary(null);
+      setCm93DictionaryStats(null);
       setStatus('error');
       setMessage(error instanceof Error ? error.message : 'Could not inspect the selected CM93 directory.');
     }
@@ -321,9 +339,10 @@ export default function App() {
               <li>Scales: {cm93Summary.scales.map((scale) => `${scale.code} (${scale.fileCount.toLocaleString()} files)`).join(', ') || 'none found'}</li>
               <li>Object dictionary: {cm93Summary.hasObjectDictionary ? 'found' : 'missing'}</li>
               <li>Attribute dictionary: {cm93Summary.hasAttributeDictionary ? 'found' : 'missing'}</li>
+              {cm93DictionaryStats && <li>Parsed dictionaries: {cm93DictionaryStats.objects.toLocaleString()} object classes · {cm93DictionaryStats.attributes.toLocaleString()} attributes</li>}
             </ul>
             {cm93Summary.warnings.length > 0 && <p>{cm93Summary.warnings.join(' ')}</p>}
-            <p>Dataset recognition is implemented; CM93 binary decoding and map portrayal are not implemented yet.</p>
+            <p>Dictionary parsing and bounds-checked binary/coordinate primitives are implemented. Cell framing, byte substitution and feature geometry extraction remain unverified; no CM93 features are drawn yet.</p>
           </div>}
           {cmapMetadata && <button className="secondary-button" type="button" onClick={toggleCmapRaster}>{cmapVisible ? 'Hide Portugal raster chart' : 'Show Portugal raster chart'}</button>}
           <div className="legend">
