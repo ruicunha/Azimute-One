@@ -103,7 +103,7 @@ export default function App() {
   const [cmapVisible, setCmapVisible] = useState(false);
   const [cm93Summary, setCm93Summary] = useState<Cm93DatasetSummary | null>(null);
   const [cm93AutoEnabled, setCm93AutoEnabled] = useState(false);
-  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number } | null>(null);
+  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[] } | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
   const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; classes: string[]; attributes: string[]; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
 
@@ -645,6 +645,7 @@ export default function App() {
         features: 0,
         cached: cm93DecodedCacheRef.current.size,
         failed: 0,
+        classes: [],
       });
       setStatus('ready');
       setMessage('Automatic CM93 detail: no cells at scale ' + selection.scale +
@@ -745,12 +746,25 @@ export default function App() {
       .filter((entry) => entry[1])
       .map(([scale, count]) => scale + ':' + count)
       .join(', ');
+    const classCounts = new Map<string, { count: number; geometries: Set<string> }>();
+    for (const feature of features) {
+      const className = String(feature.properties?.cm93Class ?? 'UNKNOWN');
+      const entry = classCounts.get(className) ?? { count: 0, geometries: new Set<string>() };
+      entry.count++;
+      entry.geometries.add(feature.geometry.type);
+      classCounts.set(className, entry);
+    }
+    const classSummary = [...classCounts.entries()]
+      .sort((left, right) => right[1].count - left[1].count)
+      .slice(0, 8)
+      .map(([name, entry]) => name + ': ' + entry.count + ' (' + [...entry.geometries].join('/') + ')');
     setCm93QuiltStats({
       scale: selection.scale + ' target (' + (scaleBreakdown || 'no cells') + ')',
       cells: selection.files.length,
       features: features.length,
       cached: cm93DecodedCacheRef.current.size,
       failed,
+      classes: classSummary,
     });
     setStatus('ready');
     setMessage('Automatic CM93 detail: ' + selection.files.length + ' ' + selection.scale +
@@ -838,6 +852,7 @@ export default function App() {
               <li>Rendered features: {cm93QuiltStats.features.toLocaleString()}</li>
               <li>Decoded-cell cache: {cm93QuiltStats.cached} cells</li>
               {cm93QuiltStats.failed > 0 && <li>Decode failures: {cm93QuiltStats.failed}</li>}
+              {cm93QuiltStats.classes.length > 0 && <li>Most common classes: {cm93QuiltStats.classes.join('; ')}</li>}
             </ul>
           </div>}
           {cm93Summary && <div className="legend cm93-summary">
