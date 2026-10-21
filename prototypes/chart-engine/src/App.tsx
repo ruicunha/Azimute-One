@@ -6,7 +6,7 @@ import { unzipSync } from 'fflate';
 import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-catalog';
 import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
-import { decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
+import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -36,9 +36,45 @@ function findCell(bytes: Uint8Array, filename: string): { name: string; bytes: U
   return { name: cellEntry[0].split('/').pop() ?? cellEntry[0], bytes: cellEntry[1] };
 }
 
+
+function findCm93CellForPosition(files: File[], latitude: number, longitude: number): File | undefined {
+  const scales = [
+    { code: 'G', step: 1 },
+    { code: 'F', step: 1 },
+    { code: 'E', step: 1 },
+    { code: 'D', step: 3 },
+    { code: 'C', step: 12 },
+    { code: 'B', step: 30 },
+    { code: 'A', step: 60 },
+    { code: 'Z', step: 120 },
+  ];
+  const normalizedLongitude = ((longitude + 360) % 360 + 360) % 360;
+  const longitudeUnits = normalizedLongitude * 3;
+  const latitudeUnits = latitude * 3 + 240;
+  const lookup = new Map(files.map((file) => [
+    (file.webkitRelativePath || file.name).replace(/\\\\/g, '/').toLowerCase(),
+    file,
+  ]));
+  for (const scale of scales) {
+    const lonCell = Math.floor(longitudeUnits / scale.step) * scale.step;
+    const latCell = Math.floor(latitudeUnits / scale.step) * scale.step;
+    const cellLat = latCell + 30;
+    const rootLat = Math.floor((cellLat - 30) / 60) * 60 + 30;
+    const rootLon = Math.floor(lonCell / 60) * 60;
+    const root = String(rootLat).padStart(4, '0') + String(rootLon).padStart(4, '0');
+    const filename = String(cellLat).padStart(4, '0') + String(lonCell).padStart(4, '0') + '.' + scale.code.toLowerCase();
+    const suffix = '/' + root.toLowerCase() + '/' + scale.code.toLowerCase() + '/' + filename;
+    const found = [...lookup.entries()].find(([path]) => path.endsWith(suffix));
+    if (found) return found[1];
+  }
+  return undefined;
+}
+
 export default function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const cm93DirectoryInput = useRef<HTMLInputElement>(null);
+  const cm93FilesRef = useRef<File[]>([]);
+  const cm93DictionaryRef = useRef<Cm93Dictionary | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const activeChartIds = useRef(new Set<string>());
   const loadingChartIds = useRef(new Set<string>());
@@ -256,6 +292,7 @@ export default function App() {
     try {
       const summary = inspectCm93Files(files);
       const fileList = Array.from(files);
+      cm93FilesRef.current = fileList;
       const findTextFile = async (name: string) => {
         const file = fileList.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase());
         return file ? file.text() : null;
@@ -320,6 +357,7 @@ export default function App() {
       const attributes = [...attributeCounts.entries()].sort((left, right) => right[1] - left[1]).slice(0, 8).map(([name, count]) => name + ' (' + count + ')');
       const cellStats = { checked: sample.length, valid, features, vectors, vectorPoints, classes, attributes, failures, example };
       setCm93CellStats(cellStats);
+      cm93DictionaryRef.current = dictionary;
       setCm93DictionaryStats(dictionaryStats);
       setCm93Summary(summary);
       setMessage(summary.isLikelyCm93V2
@@ -335,6 +373,72 @@ export default function App() {
       setCm93CellStats(null);
       setStatus('error');
       setMessage(error instanceof Error ? error.message : 'Could not inspect the selected CM93 directory.');
+    }
+  };
+
+
+  const renderCm93CellAtMapCenter = async () => {
+    const map = mapRef.current;
+    const dictionary = cm93DictionaryRef.current;
+    if (!map || !dictionary) {
+      setStatus('error');
+      setMessage('Select a valid CM93 V2 directory with both dictionaries first.');
+      return;
+    }
+    try {
+      const center = map.getCenter();
+      const file = findCm93CellForPosition(cm93FilesRef.current, center.lat, center.lng);
+      if (!file) {
+        setStatus('error');
+        setMessage('No CM93 cell was found for the current map centre at any available scale. Pan to another area and try again.');
+        return;
+      }
+      setStatus('loading');
+      setMessage('Decoding ' + (file.webkitRelativePath || file.name) + '…');
+      const cell = parseCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
+      const result = cm93CellToGeoJSON(cell, dictionary);
+      if (!map.isStyleLoaded()) await new Promise<void>((resolve) => map.once('load', resolve));
+      for (const layerId of ['cm93-cell-labels', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
+        if (map.getLayer(layerId)) map.removeLayer(layerId);
+      }
+      if (map.getSource('cm93-active-cell')) map.removeSource('cm93-active-cell');
+      map.addSource('cm93-active-cell', { type: 'geojson', data: result.geojson as never });
+      map.addLayer({
+        id: 'cm93-cell-fill', type: 'fill', source: 'cm93-active-cell',
+        paint: { 'fill-color': '#e8c96b', 'fill-opacity': 0.28 },
+      });
+      map.addLayer({
+        id: 'cm93-cell-lines', type: 'line', source: 'cm93-active-cell',
+        paint: { 'line-color': '#6f633d', 'line-width': 1 },
+      });
+      map.addLayer({
+        id: 'cm93-cell-points', type: 'circle', source: 'cm93-active-cell',
+        filter: ['==', ['geometry-type'], 'Point'],
+        paint: { 'circle-radius': 4, 'circle-color': '#d94b36', 'circle-stroke-color': '#fff7df', 'circle-stroke-width': 1 },
+      });
+      map.addLayer({
+        id: 'cm93-cell-labels', type: 'symbol', source: 'cm93-active-cell',
+        filter: ['==', ['geometry-type'], 'Point'],
+        layout: {
+          'text-field': ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''],
+          'text-size': 10, 'text-offset': [0, 1.1], 'text-optional': true,
+        },
+        paint: { 'text-color': '#273b43', 'text-halo-color': '#f6f1df', 'text-halo-width': 1 },
+      });
+      const bounds = cell.metadata.geographicBounds;
+      if (bounds.west <= bounds.east) {
+        map.fitBounds([[bounds.west, bounds.south], [bounds.east, bounds.north]], { padding: 40, maxZoom: 13, duration: 600 });
+      }
+      setFeatureCount(result.geojson.features.length);
+      setChartName(file.name);
+      setSource('CM93 V2 decoded cell');
+      setStatus('ready');
+      setMessage('Rendered ' + result.geojson.features.length + ' decoded features from ' + file.name +
+        (result.omittedGeometryCount ? '; omitted ' + result.omittedGeometryCount + ' unsupported/invalid geometries' : '') +
+        (result.warnings.length ? '; some attributes could not be decoded' : '') + '.');
+    } catch (error) {
+      setStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Could not decode and render the CM93 cell.');
     }
   };
 
@@ -383,6 +487,7 @@ export default function App() {
           </div>
           <label className="file-button"><span>Load ENC file</span><input type="file" accept=".000,.zip,application/zip,application/octet-stream" onChange={(event) => void onFile(event.target.files?.[0])} /></label>
           <label className="file-button"><span>Inspect CM93 V2 directory</span><input ref={cm93DirectoryInput} type="file" multiple onChange={(event) => onCm93Directory(event.target.files)} /></label>
+          {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93CellAtMapCenter()}>Render CM93 cell at map centre</button>}
           {cm93Summary && <div className="legend cm93-summary">
             <span className="field-label">CM93 DATASET INVENTORY</span>
             <ul>
