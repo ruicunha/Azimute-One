@@ -63,13 +63,13 @@ The Portuguese C-MAP archive used during development was rendered locally, but i
 - `US5NY14M` — New York Harbor candidate (configured at 1:20,000).
 - NOAA source: https://charts.noaa.gov/ENCs/ENCs.shtml
 
-All five entries are evaluated by the same viewport selector. The New York charts are candidates for a same-area/different-scale test. Their current footprints and compilation scales are proof-of-concept metadata; the CHS sample uses a deliberately broad Canadian extent. They should be replaced with accurate per-cell coverage and compilation scale metadata (ideally generated from the chart collection) before any serious use.
+All five entries are evaluated by the same viewport selector. The New York charts are candidates for a same-area/different-scale test. Their current footprints and compilation scales are proof-of-concept metadata. They should be replaced with accurate per-cell coverage and compilation scale metadata (ideally generated from the chart collection) before any serious use.
 
 ## Known limitations
 
 - This is a technology spike, not a complete chartplotter.
 - The upstream S-57 portrayal is simplified and not approved for primary navigation.
-- The sample collection includes Boston, New York candidate charts, a Gulf overview, ; it is not a global ENC collection.
+- The sample collection includes Boston, New York candidate charts, and a Gulf overview; it is not a global ENC collection.
 - Catalogue metadata is currently maintained explicitly in TypeScript, not extracted from the ENC files.
 - Quilting is currently a coarse selection plan, not full OpenCPN-style per-area portrayal clipping. No ENC updates, S-63 support, safety contour configuration, route planning, AIS, or alarm logic.
 - Compare the rendered result against OpenCPN with the same ENC and record portrayal differences.
