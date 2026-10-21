@@ -71,14 +71,144 @@ function findCm93CellForPosition(files: File[], latitude: number, longitude: num
   return undefined;
 }
 
-const cm93QuiltLayerIds = ['cm93-quilt-points', 'cm93-quilt-fill'];
+const cm93QuiltLayerIds = [
+  'cm93-quilt-labels', 'cm93-quilt-depth-labels', 'cm93-quilt-icons',
+  'cm93-quilt-lines', 'cm93-quilt-points', 'cm93-quilt-fill',
+];
+
+const cm93KnownLineClasses = [
+  'DEPCNT', 'COALNE', 'SLCONS', 'TSSBND', 'TSSLPT', 'RIVERS', 'CANALS',
+];
+const cm93PointLabelClasses = [
+  'LIGHTS', 'BCNLAT', 'BCNCAR', 'BCNSAW', 'BCNSPP',
+  'BOYLAT', 'BOYCAR', 'BOYISD', 'BOYSAW', 'BOYSPP', 'BOYINB',
+  'LNDMRK', 'WRECKS', 'UWTROC',
+];
+
+const cm93ClassDescriptions: Record<string, string> = {
+  LIGHTS: 'Lights — navigational lights and light characteristics',
+  BCNLAT: 'Lateral beacon — marks channel edges',
+  BCNCAR: 'Cardinal beacon — marks safe water by compass direction',
+  BCNSAW: 'Safe-water beacon — marks navigable water around it',
+  BCNSPP: 'Special-purpose beacon — marks a special area or feature',
+  BOYLAT: 'Lateral buoy — marks channel edges',
+  BOYCAR: 'Cardinal buoy — marks safe water by compass direction',
+  BOYISD: 'Isolated-danger buoy — marks a nearby hazard',
+  BOYSAW: 'Safe-water buoy — marks navigable water around it',
+  BOYSPP: 'Special-purpose buoy — marks a special area or feature',
+  BOYINB: 'Installation buoy — associated with an offshore installation',
+  LNDMRK: 'Landmark — conspicuous object on land',
+  WRECKS: 'Wreck — sunken or stranded vessel',
+  UWTROC: 'Underwater rock — submerged rocky hazard',
+  DEPCNT: 'Depth contour — line joining equal depths',
+  DEPARE: 'Depth area — water area with a depth range',
+  DRGARE: 'Dredged area — maintained depth area',
+  COALNE: 'Coastline — boundary between land and water',
+  LNDARE: 'Land area',
+  SLCONS: 'Shoreline construction — quay, seawall, or similar structure',
+  TSSBND: 'Traffic separation scheme boundary',
+  TSSLPT: 'Traffic separation scheme lane part',
+};
+
+function cm93ClassIcon(name: string): string {
+  if (name === 'LIGHTS') return '✦';
+  if (name.startsWith('BOY')) return name === 'BOYCAR' || name === 'BOYISD' ? '◆' : '◇';
+  if (name.startsWith('BCN')) return name === 'BCNCAR' ? '▲' : '△';
+  if (name === 'LNDMRK' || name === 'UWTROC') return '▲';
+  if (name === 'WRECKS') return '×';
+  return '•';
+}
 
 function addCm93PointLayer(map: MapLibreMap, source: string, layerId: string, visibleClasses: string[]): void {
-  map.addLayer({ id: layerId, type: 'circle', source,
+  map.addLayer({
+    id: layerId, type: 'symbol', source, minzoom: 3,
     filter: ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', visibleClasses]]],
-    paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 2, 8, 3, 13, 4],
-      'circle-color': ['match', ['get', 'cm93Class'], 'LIGHTS', '#e6b94a', 'LNDMRK', '#8c5a36', '#d94b36'],
-      'circle-stroke-color': '#f6f1df', 'circle-stroke-width': 0.8 },
+    layout: {
+      'text-field': ['match', ['get', 'cm93Class'],
+        'LIGHTS', '✦',
+        'BCNCAR', '▲', 'BCNLAT', '△', 'BCNSAW', '○', 'BCNSPP', '◇',
+        'BOYCAR', '◆', 'BOYISD', '◆', 'BOYLAT', '◇', 'BOYSAW', '○',
+        'BOYSPP', '◇', 'BOYINB', '◇', 'LNDMRK', '▲', 'WRECKS', '×',
+        'UWTROC', '▲', '•'],
+      'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 3, 8, 8, 10, 13, 13, 16, 16],
+      'text-allow-overlap': false,
+      'text-ignore-placement': false,
+    },
+    paint: {
+      'text-color': ['match', ['get', 'cm93Class'],
+        'LIGHTS', '#d49a19', 'BCNCAR', '#d94b36', 'BOYCAR', '#d94b36',
+        'WRECKS', '#c43c35', 'UWTROC', '#c43c35', 'LNDMRK', '#8c5a36', '#327f9e'],
+      'text-halo-color': '#f7f4e9', 'text-halo-width': 1.1,
+    },
+  });
+}
+
+function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string, visiblePointClasses: string[]): void {
+  map.addLayer({
+    id: prefix + '-lines', type: 'line', source, minzoom: 2,
+    filter: ['all',
+      ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]],
+      ['in', ['get', 'cm93Class'], ['literal', cm93KnownLineClasses]],
+    ],
+    paint: {
+      'line-color': ['match', ['get', 'cm93Class'],
+        'DEPCNT', '#70a9c3', 'COALNE', '#8ea9a8', 'SLCONS', '#7b8f91',
+        'TSSBND', '#b58b69', 'TSSLPT', '#b58b69', '#83a6b5'],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 2, 0.35, 8, 0.7, 13, 1.25, 16, 1.6],
+      'line-opacity': ['match', ['get', 'cm93Class'], 'DEPCNT', 0.95, 0.82],
+    },
+  });
+  addCm93PointLayer(map, source, prefix + '-points', visiblePointClasses);
+  map.addLayer({
+    id: prefix + '-icons', type: 'symbol', source, minzoom: 3,
+    filter: ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    layout: {
+      'text-field': ['match', ['get', 'cm93Class'],
+        'LIGHTS', '✦',
+        'BCNCAR', '▲', 'BCNLAT', '△', 'BCNSAW', '○', 'BCNSPP', '◇',
+        'BOYCAR', '◆', 'BOYISD', '◆', 'BOYLAT', '◇', 'BOYSAW', '○',
+        'BOYSPP', '◇', 'BOYINB', '◇', 'LNDMRK', '▲', 'WRECKS', '×',
+        'UWTROC', '▲', '•'],
+      'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 3, 8, 8, 10, 13, 13, 16, 16],
+      'text-allow-overlap': false,
+    },
+    paint: {
+      'text-color': ['match', ['get', 'cm93Class'],
+        'LIGHTS', '#d49a19', 'BCNCAR', '#d94b36', 'BOYCAR', '#d94b36',
+        'WRECKS', '#c43c35', 'UWTROC', '#c43c35', 'LNDMRK', '#8c5a36', '#327f9e'],
+      'text-halo-color': '#f7f4e9', 'text-halo-width': 1.1,
+    },
+  });
+  map.addLayer({
+    id: prefix + '-labels', type: 'symbol', source, minzoom: 12,
+    filter: ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]]],
+    layout: {
+      'text-field': ['case',
+        ['==', ['get', 'cm93Class'], 'LIGHTS'],
+        ['concat', ['coalesce', ['to-string', ['get', 'OBJNAM']], 'Light'], ' ', ['coalesce', ['to-string', ['get', 'SIGPER']], ''], 's'],
+        ['has', 'OBJNAM'], ['to-string', ['get', 'OBJNAM']],
+        ['has', 'VALNMR'], ['concat', ['to-string', ['get', 'VALNMR']], ' m'],
+        ['has', 'COLOUR'], ['to-string', ['get', 'COLOUR']],
+        ''],
+      'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 12, 9, 16, 12],
+      'text-offset': [0, 1.1], 'text-anchor': 'top',
+      'text-optional': true, 'text-max-width': 10,
+    },
+    paint: { 'text-color': '#36566a', 'text-halo-color': '#f7f4e9', 'text-halo-width': 1.2 },
+  });
+  map.addLayer({
+    id: prefix + '-depth-labels', type: 'symbol', source, minzoom: 10,
+    filter: ['all', ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]], ['==', ['get', 'cm93Class'], 'DEPCNT'], ['has', 'VALDCO']],
+    layout: {
+      'symbol-placement': 'line',
+      'text-field': ['concat', ['to-string', ['get', 'VALDCO']], ' m'],
+      'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
+      'text-size': 10, 'text-max-angle': 30, 'text-allow-overlap': false,
+    },
+    paint: { 'text-color': '#426f87', 'text-halo-color': '#eaf4f6', 'text-halo-width': 1.2 },
   });
 }
 
@@ -328,7 +458,7 @@ export default function App() {
       setCm93QuiltStats(null);
       if (mapRef.current) {
         clearCm93Quilt(mapRef.current);
-        for (const layerId of ['cm93-cell-labels', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
+        for (const layerId of ['cm93-cell-labels', 'cm93-cell-depth-labels', 'cm93-cell-icons', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
           if (mapRef.current.getLayer(layerId)) mapRef.current.removeLayer(layerId);
         }
         if (mapRef.current.getSource('cm93-active-cell')) mapRef.current.removeSource('cm93-active-cell');
@@ -446,6 +576,7 @@ export default function App() {
       map.addSource('cm93-active-cell', { type: 'geojson', data: result.geojson as never });
       map.addLayer({
         id: 'cm93-cell-fill', type: 'fill', source: 'cm93-active-cell',
+        filter: ['all', ['in', ['geometry-type'], ['literal', ['Polygon', 'MultiPolygon']]], ['in', ['get', 'cm93Class'], ['literal', ['DEPARE', 'DRGARE', 'LNDARE', 'UNSARE']]]],
         paint: {
           'fill-color': ['match', ['get', 'cm93Class'],
             'DEPARE', '#d5e8ec', 'DRGARE', '#d5e8ec', 'LNDARE', '#d9d6c8',
@@ -453,7 +584,7 @@ export default function App() {
           'fill-opacity': 0.52, 'fill-opacity-transition': { duration: 180, delay: 0 },
         },
       });
-      addCm93PointLayer(map, 'cm93-active-cell', 'cm93-cell-points', visibleCm93PointClassesRef.current);
+      addCm93PortrayalLayers(map, 'cm93-active-cell', 'cm93-cell', visibleCm93PointClassesRef.current);
 
 
 
@@ -664,6 +795,7 @@ export default function App() {
       map.addSource('cm93-quilt', { type: 'geojson', data, tolerance: 0.5, maxzoom: 14, buffer: 0 });
       map.addLayer({
         id: 'cm93-quilt-fill', type: 'fill', source: 'cm93-quilt',
+        filter: ['all', ['in', ['geometry-type'], ['literal', ['Polygon', 'MultiPolygon']]], ['in', ['get', 'cm93Class'], ['literal', ['DEPARE', 'DRGARE', 'LNDARE', 'UNSARE']]]],
         paint: {
           'fill-color': ['match', ['get', 'cm93Class'],
             'DEPARE', '#d5e8ec', 'DRGARE', '#d5e8ec', 'LNDARE', '#d9d6c8',
@@ -671,7 +803,7 @@ export default function App() {
           'fill-opacity': 0.52,
         },
       });
-      addCm93PointLayer(map, 'cm93-quilt', 'cm93-quilt-points', visibleCm93PointClassesRef.current);
+      addCm93PortrayalLayers(map, 'cm93-quilt', 'cm93-quilt', visibleCm93PointClassesRef.current);
 
 
 
@@ -746,7 +878,7 @@ export default function App() {
     const next = visibleCm93PointClassesRef.current.includes(name) ? visibleCm93PointClassesRef.current.filter((item) => item !== name) : [...visibleCm93PointClassesRef.current, name];
     visibleCm93PointClassesRef.current = next; setVisibleCm93PointClasses(next);
     const map = mapRef.current; if (!map) return;
-    for (const layerId of ['cm93-cell-points', 'cm93-quilt-points']) if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+    for (const layerId of ['cm93-cell-points', 'cm93-quilt-points', 'cm93-cell-icons', 'cm93-quilt-icons']) if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', next]]]);
   };
 
   const toggleCmapRaster = () => {
@@ -797,7 +929,8 @@ export default function App() {
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93CellAtMapCenter()}>Render CM93 cell at map centre</button>}
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93Overview()}>Render CM93 dataset overview</button>}
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={toggleCm93Auto}>{cm93AutoEnabled ? 'Disable automatic CM93 detail' : 'Enable automatic CM93 detail'}</button>}
-          {cm93Summary && <div className="legend"><span className="field-label">CM93 POINT TYPES (HIDDEN BY DEFAULT)</span><p>All CM93 line features and point markers are hidden by default to remove clutter. Select point classes to show only those types.</p>{cm93PointClassCounts.length ? <ul>{cm93PointClassCounts.map(({ name, count }) => <li key={name}><label><input type="checkbox" checked={visibleCm93PointClasses.includes(name)} onChange={() => toggleCm93PointClass(name)} /> {name} — {count.toLocaleString()} points</label></li>)}</ul> : <p>Render a CM93 cell, overview or enable automatic detail to count point types in the active chart.</p>}</div>}
+          {cm93Summary && <div className="legend"><span className="field-label">CM93 POINT TYPES</span><p>Point symbols stay hidden until selected. At close zoom, available object names and light details are labelled.</p>{cm93PointClassCounts.length ? <ul>{cm93PointClassCounts.map(({ name, count }) => <li key={name}><label className="cm93-type-row"><input type="checkbox" checked={visibleCm93PointClasses.includes(name)} onChange={() => toggleCm93PointClass(name)} /><span className="cm93-type-icon">{cm93ClassIcon(name)}</span><span><strong>{name}</strong><small>{cm93ClassDescriptions[name] ?? 'CM93 object class; meaning not yet mapped.'}</small><small>{count.toLocaleString()} point(s)</small></span></label></li>)}</ul> : <p>Render a CM93 cell, overview or enable automatic detail to count point types in the active chart.</p>}
+            <div className="cm93-glossary"><span className="field-label">QUICK ACRONYM GUIDE</span>{['DEPCNT','DEPARE','DRGARE','COALNE','LIGHTS','BOYLAT','BOYCAR','BOYISD','BCNLAT','BCNCAR','LNDMRK','WRECKS','UWTROC'].map((name) => <p key={name}><strong>{name}</strong> — {cm93ClassDescriptions[name]}</p>)}</div></div>}
           {cm93AutoEnabled && cm93QuiltStats && <div className="legend">
             <span className="field-label">AUTOMATIC CM93 VIEWPORT QUILT</span>
             <ul>
