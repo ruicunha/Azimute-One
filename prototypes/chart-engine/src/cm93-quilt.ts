@@ -61,7 +61,8 @@ export function selectCm93ViewportCells(
   const step = CM93_SCALE_STEPS[scale];
   const byPath = new Map<string, Cm93CellFile>();
   for (const file of files) {
-    byPath.set((file.webkitRelativePath || file.name).toLowerCase(), file);
+    const pathParts = (file.webkitRelativePath || file.name).toLowerCase().split('/');
+    byPath.set('/' + pathParts.slice(-3).join('/'), file);
   }
 
   const south = Math.max(-79.5, Math.min(bounds.south, bounds.north));
