@@ -236,6 +236,7 @@ export default function App() {
   const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
   const visibleCm93PointClassesRef = useRef<string[]>([]);
   const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[] } | null>(null);
+  const [cm93ClickDebug, setCm93ClickDebug] = useState<string | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
   const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; classes: string[]; attributes: string[]; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
 
@@ -289,6 +290,101 @@ export default function App() {
     });
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'nautical' as never }), 'bottom-left');
+    map.on('click', (event) => {
+      const click = {
+        latitude: Number(event.lngLat.lat.toFixed(6)),
+        longitude: Number(event.lngLat.lng.toFixed(6)),
+      };
+      const view = map.getBounds();
+      const viewport = {
+        west: Number(view.getWest().toFixed(6)),
+        south: Number(view.getSouth().toFixed(6)),
+        east: Number(view.getEast().toFixed(6)),
+        north: Number(view.getNorth().toFixed(6)),
+        zoom: Number(map.getZoom().toFixed(3)),
+        center: {
+          latitude: Number(map.getCenter().lat.toFixed(6)),
+          longitude: Number(map.getCenter().lng.toFixed(6)),
+        },
+      };
+      const files = cm93FilesRef.current;
+      const selection = files.length ? selectCm93ViewportCells(files, {
+        west: view.getWest(), south: view.getSouth(), east: view.getEast(), north: view.getNorth(),
+      }, map.getZoom(), 1200) : null;
+      const clickedCell = files.length
+        ? findCm93CellForPosition(files, click.latitude, click.longitude)
+        : undefined;
+      const visibleLayerIds = [
+        ...cm93QuiltLayerIds,
+        'cm93-cell-labels', 'cm93-cell-depth-labels', 'cm93-cell-icons',
+        'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill',
+      ].filter((id) => Boolean(map.getLayer(id)));
+      const renderedFeatures = visibleLayerIds.length
+        ? map.queryRenderedFeatures(event.point, { layers: visibleLayerIds }).slice(0, 12).map((feature) => {
+          const properties = feature.properties ?? {};
+          const usefulKeys = [
+            'cm93Class', 'cm93SourceCell', 'cm93RelatedChild', 'cm93DetailLabel',
+            'OBJNAM', 'OBJL', 'VALNMR', 'VALDCO', 'DRVAL1', 'DRVAL2',
+            'COLOUR', 'CATLIT', 'LITCHR', 'SIGPER', 'STATUS', 'QUASOU',
+          ];
+          return {
+            layer: feature.layer.id,
+            geometry: feature.geometry.type,
+            properties: Object.fromEntries(
+              Object.entries(properties).filter(([key, value]) => usefulKeys.includes(key) && value !== undefined && value !== null),
+            ),
+          };
+        })
+        : [];
+      const selectedCells = selection?.files ?? [];
+      const report = {
+        reportType: 'Azimute One CM93 map-click diagnostic',
+        capturedAt: new Date().toISOString(),
+        click,
+        viewport,
+        cm93: {
+          directoryLoaded: files.length > 0,
+          automaticDetailEnabled: cm93AutoEnabledRef.current,
+          requestedScale: selection?.scale ?? null,
+          selectedCellCount: selectedCells.length,
+          selectedScaleCounts: selection?.scaleCounts ?? {},
+          clickedPositionCell: clickedCell ? {
+            path: clickedCell.webkitRelativePath || clickedCell.name,
+            scale: ((clickedCell.webkitRelativePath || clickedCell.name).split('/').slice(-2, -1)[0] ?? '').toUpperCase(),
+            cachedDecodedFeatureCount: cm93DecodedCacheRef.current.get((clickedCell.webkitRelativePath || clickedCell.name).toLowerCase())?.length ?? null,
+          } : null,
+          selectedCells: selectedCells.slice(0, 60).map((file) => {
+            const key = (file.webkitRelativePath || file.name).toLowerCase();
+            const pathParts = (file.webkitRelativePath || file.name).split('/');
+            return {
+              path: file.webkitRelativePath || file.name,
+              scale: (pathParts[pathParts.length - 2] ?? '').toUpperCase(),
+              cachedDecodedFeatureCount: cm93DecodedCacheRef.current.get(key)?.length ?? null,
+            };
+          }),
+          selectedCellListTruncated: selectedCells.length > 60,
+          renderedFeaturesAtClick: renderedFeatures,
+          renderedFeatureCountAtClick: renderedFeatures.length,
+          lastQuiltStats: cm93QuiltStats ?? null,
+        },
+        notes: [
+          'Selected-cell paths are the current filename/grid-based candidates, not verified M_COVR coverage.',
+          'A null cachedDecodedFeatureCount means that cell is not currently in the decoded cache.',
+          'Rendered features are only features MapLibre reports at the clicked pixel and may be empty if no CM93 layer is visible there.',
+        ],
+      };
+      const debugText = JSON.stringify(report, null, 2);
+      setCm93ClickDebug(debugText);
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        void navigator.clipboard.writeText(debugText).then(() => {
+          setMessage('CM93 click diagnostic copied to clipboard. Zoom or pan to another problem area and click again.');
+        }).catch(() => {
+          setMessage('CM93 click diagnostic captured. Clipboard permission was blocked; use “Copy last map-click debug” in the sidebar.');
+        });
+      } else {
+        setMessage('CM93 click diagnostic captured. Clipboard API unavailable; use “Copy last map-click debug” in the sidebar.');
+      }
+    });
     mapRef.current = map;
     return () => {
       map.remove();
@@ -957,6 +1053,19 @@ export default function App() {
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93CellAtMapCenter()}>Render CM93 cell at map centre</button>}
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93Overview()}>Render CM93 dataset overview</button>}
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={toggleCm93Auto}>{cm93AutoEnabled ? 'Disable automatic CM93 detail' : 'Enable automatic CM93 detail'}</button>}
+          {cm93Summary?.isLikelyCm93V2 && <div className="legend">
+            <span className="field-label">CM93 CLICK DIAGNOSTICS</span>
+            <p>Click any point on the map after zooming to the problem area. A JSON report is copied automatically with coordinates, zoom/bounds, candidate cell paths and scales, cached decode counts, and rendered feature details.</p>
+            <button className="secondary-button" type="button" disabled={!cm93ClickDebug} onClick={() => {
+              if (!cm93ClickDebug) return;
+              void navigator.clipboard?.writeText(cm93ClickDebug).then(() => {
+                setMessage('Last CM93 click diagnostic copied to clipboard.');
+              }).catch(() => {
+                setMessage('Clipboard access failed. Try clicking the map again or allow clipboard access for this site.');
+              });
+            }}>Copy last map-click debug</button>
+            {cm93ClickDebug && <p>Last click report ready. Click another point to replace it with fresh diagnostics.</p>}
+          </div>}
           {cm93Summary && <div className="legend"><span className="field-label">CM93 POINT TYPES</span><p>Point symbols stay hidden until selected. At close zoom, available object names and light details are labelled.</p>{cm93PointClassCounts.length ? <ul>{cm93PointClassCounts.map(({ name, count }) => <li key={name}><label className="cm93-type-row"><input type="checkbox" checked={visibleCm93PointClasses.includes(name)} onChange={() => toggleCm93PointClass(name)} /><span className="cm93-type-icon">{cm93ClassIcon(name)}</span><span><strong>{name}</strong><small>{cm93ClassDescriptions[name] ?? 'CM93 object class; meaning not yet mapped.'}</small><small>{count.toLocaleString()} point(s)</small></span></label></li>)}</ul> : <p>Render a CM93 cell, overview or enable automatic detail to count point types in the active chart.</p>}
             <div className="cm93-glossary"><span className="field-label">QUICK ACRONYM GUIDE</span>{['DEPCNT','DEPARE','DRGARE','COALNE','LIGHTS','BOYLAT','BOYCAR','BOYISD','BCNLAT','BCNCAR','LNDMRK','WRECKS','UWTROC'].map((name) => <p key={name}><strong>{name}</strong> — {cm93ClassDescriptions[name]}</p>)}</div></div>}
           {cm93AutoEnabled && cm93QuiltStats && <div className="legend">
