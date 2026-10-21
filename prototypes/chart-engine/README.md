@@ -31,11 +31,11 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. The hosted demo downloads the sample NOAA/CHS ENC ZIPs during the Pages build. Local ENC files can be selected with **Load ENC file**. An optional MBTiles raster chart can also be converted into static XYZ PNG tiles and deployed alongside the ENC charts.
+Open the local URL printed by Vite. The hosted demo downloads sample NOAA ENC ZIPs during the Pages build. Local ENC files can be selected with **Load ENC file**. An optional MBTiles raster chart can also be converted into static XYZ PNG tiles and deployed alongside the ENC charts.
 
 ## GitHub Pages demo
 
-The GitHub Actions workflow builds this prototype and downloads the sample NOAA ZIPs into the generated static site. After GitHub Pages is configured to use **GitHub Actions** in repository Settings → Pages, pushes to `poc/chart-engine-noaa-enc` deploy the demo at:
+The GitHub Actions workflow builds this prototype and downloads the sample NOAA ZIPs into the generated static site. After GitHub Pages is configured to use **GitHub Actions** in repository Settings → Pages, pushes to `main` deploy the demo at:
 
 https://ruicunha.github.io/Azimute-One/
 
@@ -59,19 +59,17 @@ The Portuguese C-MAP archive used during development was rendered locally, but i
 - `US1GC09M` — NOAA small-scale ENC, configured with a 1:1,200,000 compilation-scale estimate.
 - `US5MA12M` — NOAA Boston Harbor.
 - `US5MA11M` — NOAA Boston Inner Harbor, configured with a 1:5,000 compilation-scale estimate.
-- `9995_S57ENC.zip` — Canadian Hydrographic Service fictitious training ENC.
 - `US4NY13M` — New York approaches candidate (configured at 1:80,000).
 - `US5NY14M` — New York Harbor candidate (configured at 1:20,000).
 - NOAA source: https://charts.noaa.gov/ENCs/ENCs.shtml
-- CHS training sample: https://www.chs.gc.ca/documents/charts-cartes/instruction-formation/9995_S57ENC.zip
 
-All six entries are evaluated by the same viewport selector. The New York charts are candidates for a same-area/different-scale test. Their current footprints and compilation scales are proof-of-concept metadata; the CHS sample uses a deliberately broad Canadian extent. They should be replaced with accurate per-cell coverage and compilation scale metadata (ideally generated from the chart collection) before any serious use.
+All five entries are evaluated by the same viewport selector. The New York charts are candidates for a same-area/different-scale test. Their current footprints and compilation scales are proof-of-concept metadata; the CHS sample uses a deliberately broad Canadian extent. They should be replaced with accurate per-cell coverage and compilation scale metadata (ideally generated from the chart collection) before any serious use.
 
 ## Known limitations
 
 - This is a technology spike, not a complete chartplotter.
 - The upstream S-57 portrayal is simplified and not approved for primary navigation.
-- The sample collection includes Boston, New York candidate charts, a Gulf overview, and a CHS training ENC; it is not a global ENC collection.
+- The sample collection includes Boston, New York candidate charts, a Gulf overview, ; it is not a global ENC collection.
 - Catalogue metadata is currently maintained explicitly in TypeScript, not extracted from the ENC files.
 - Quilting is currently a coarse selection plan, not full OpenCPN-style per-area portrayal clipping. No ENC updates, S-63 support, safety contour configuration, route planning, AIS, or alarm logic.
 - Compare the rendered result against OpenCPN with the same ENC and record portrayal differences.
