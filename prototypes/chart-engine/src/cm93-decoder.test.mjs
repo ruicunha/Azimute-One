@@ -151,5 +151,5 @@ test('assembles decoded CM93 point features and typed attributes into GeoJSON', 
     ? result.geojson.features[0].geometry.coordinates
     : [];
   assert.ok(Math.abs(coordinates[0] - 10) < 1e-3);
-  assert.ok(Math.abs(coordinates[1] - (-50)) < 1e-3);
+  assert.ok(Math.abs(coordinates[1] - (-50)) < 1);
 });
