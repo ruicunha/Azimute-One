@@ -723,22 +723,14 @@ export default function App() {
     }, map.getZoom(), 1200);
 
     if (selection.files.length === 0) {
-      // Do not clear the last good quilt just because the current scale/path
-      // lookup temporarily finds no cell. This avoids a blank flash during
-      // scale transitions; the previous GeoJSON remains geographically placed
-      // and naturally moves out of view as the user pans away.
-      setCm93QuiltStats({
-        scale: selection.scale,
-        cells: 0,
-        features: 0,
-        cached: cm93DecodedCacheRef.current.size,
-        failed: 0,
-        classes: [],
-      });
+      // No target or coarser cell exists for this viewport: clear the old quilt
+      // rather than showing features from the previous viewport/zoom.
+      const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
+      if (existingSource?.setData) existingSource.setData({ type: 'FeatureCollection', features: [] } as never);
+      cm93RenderedFeaturesRef.current = [];
+      setCm93QuiltStats({ scale: selection.scale, cells: 0, features: 0, cached: cm93DecodedCacheRef.current.size, failed: 0, classes: [] });
       setStatus('ready');
-      setMessage('Automatic CM93 detail: no cells at scale ' + selection.scale +
-        ' or any coarser fallback scale cover this viewport.' +
-        (map.getSource('cm93-active-cell') ? ' The overview remains visible.' : ' No CM93 coverage is available here.'));
+      setMessage('No CM93 cell exists at the target scale or any coarser scale for this viewport.');
       return;
     }
 
@@ -792,7 +784,7 @@ export default function App() {
           ...feature,
           properties: { ...(feature.properties ?? {}), cm93SourceCell: key, cm93SourceScale: candidate.scale },
         }));
-        if (candidateIndex > 0) {
+        if (candidate.scale !== selection.scale) {
           usable = clipCm93FeaturesToBounds(usable, group.bounds) as typeof usable;
         }
         if (usable.length === 0) continue;
