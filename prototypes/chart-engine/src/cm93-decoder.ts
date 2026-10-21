@@ -653,3 +653,94 @@ export function cm93GridPointToWgs84(
   }
   return [longitude, latitude];
 }
+
+
+export type Cm93GeoJsonResult = {
+  geojson: GeoJSON.FeatureCollection;
+  omittedGeometryCount: number;
+  warnings: string[];
+};
+
+/** Assemble decoded CM93 records into GeoJSON, without applying chart portrayal rules. */
+export function cm93CellToGeoJSON(cell: Cm93ParsedCell, dictionary: Cm93Dictionary): Cm93GeoJsonResult {
+  const features: GeoJSON.Feature[] = [];
+  const warnings: string[] = [];
+  let omittedGeometryCount = 0;
+
+  const orientedVectorPoints = (reference: { index: number; segmentUsage: number }): Array<[number, number]> => {
+    const points = cell.vectors[reference.index]?.points ?? [];
+    return (reference.segmentUsage & 4) !== 0 ? [...points].reverse() : points;
+  };
+  const toCoordinates = (points: Array<[number, number]>): GeoJSON.Position[] =>
+    points.map(([x, y]) => cm93GridPointToWgs84(cell.metadata, x, y));
+
+  for (const record of cell.features) {
+    let geometry: GeoJSON.Geometry | null = null;
+    if (record.geometry.kind === 'point') {
+      const point = cell.points2d[record.geometry.index];
+      if (point) geometry = { type: 'Point', coordinates: cm93GridPointToWgs84(cell.metadata, point[0], point[1]) };
+    } else if (record.geometry.kind === 'point3d') {
+      const pointRecord = cell.points3d[record.geometry.index];
+      if (pointRecord?.points.length) {
+        geometry = {
+          type: 'MultiPoint',
+          coordinates: pointRecord.points.map(([x, y]) => cm93GridPointToWgs84(cell.metadata, x, y)),
+        };
+      }
+    } else if (record.geometry.kind === 'line') {
+      const points: Array<[number, number]> = [];
+      for (const reference of record.geometry.vectors) {
+        for (const point of orientedVectorPoints(reference)) {
+          const previous = points[points.length - 1];
+          if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) points.push(point);
+        }
+      }
+      if (points.length >= 2) geometry = { type: 'LineString', coordinates: toCoordinates(points) };
+    } else if (record.geometry.kind === 'area') {
+      const rings: Array<Array<[number, number]>> = [];
+      let ring: Array<[number, number]> = [];
+      for (const reference of record.geometry.vectors) {
+        const points = orientedVectorPoints(reference);
+        for (const point of points) {
+          const previous = ring[ring.length - 1];
+          if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) ring.push(point);
+        }
+        if (ring.length >= 4) {
+          const first = ring[0];
+          const last = ring[ring.length - 1];
+          if (first[0] === last[0] && first[1] === last[1]) {
+            rings.push(ring);
+            ring = [];
+          }
+        }
+      }
+      if (rings.length) geometry = { type: 'Polygon', coordinates: rings.map(toCoordinates) };
+    }
+
+    if (!geometry) {
+      omittedGeometryCount++;
+      continue;
+    }
+
+    const classDefinition = dictionary.objectsByCode.get(record.objectCode);
+    const properties: Record<string, string | number | boolean | null | number[]> = {
+      cm93ObjectCode: record.objectCode,
+      cm93Class: classDefinition?.name ?? `UNKNOWN_${record.objectCode}`,
+      cm93GeometryType: record.geometryType,
+    };
+    try {
+      for (const attribute of decodeCm93FeatureAttributes(record.rawAttributes, record.attributeCount, dictionary)) {
+        if (attribute.supported && attribute.name) properties[attribute.name] = attribute.value;
+      }
+    } catch (error) {
+      warnings.push(error instanceof Error ? error.message : 'A CM93 attribute block could not be decoded.');
+    }
+    features.push({ type: 'Feature', id: features.length, geometry, properties });
+  }
+
+  return {
+    geojson: { type: 'FeatureCollection', features },
+    omittedGeometryCount,
+    warnings: [...new Set(warnings)],
+  };
+}
