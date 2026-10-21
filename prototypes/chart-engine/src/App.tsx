@@ -7,6 +7,7 @@ import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-c
 import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
 import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
+import { selectCm93ViewportCells } from './cm93-quilt';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -70,11 +71,24 @@ function findCm93CellForPosition(files: File[], latitude: number, longitude: num
   return undefined;
 }
 
+const cm93QuiltLayerIds = ['cm93-quilt-labels', 'cm93-quilt-points', 'cm93-quilt-lines', 'cm93-quilt-fill'];
+
+function clearCm93Quilt(map: MapLibreMap): void {
+  for (const layerId of cm93QuiltLayerIds) {
+    if (map.getLayer(layerId)) map.removeLayer(layerId);
+  }
+  if (map.getSource('cm93-quilt')) map.removeSource('cm93-quilt');
+}
+
 export default function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const cm93DirectoryInput = useRef<HTMLInputElement>(null);
   const cm93FilesRef = useRef<File[]>([]);
   const cm93DictionaryRef = useRef<Cm93Dictionary | null>(null);
+  const cm93DecodedCacheRef = useRef(new Map<string, ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>());
+  const cm93QuiltRequestRef = useRef(0);
+  const cm93AutoEnabledRef = useRef(false);
+  const cm93OverviewScaleRef = useRef<string | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const activeChartIds = useRef(new Set<string>());
   const loadingChartIds = useRef(new Set<string>());
@@ -88,6 +102,8 @@ export default function App() {
   const [cmapMetadata, setCmapMetadata] = useState<RasterChartMetadata | null>(null);
   const [cmapVisible, setCmapVisible] = useState(false);
   const [cm93Summary, setCm93Summary] = useState<Cm93DatasetSummary | null>(null);
+  const [cm93AutoEnabled, setCm93AutoEnabled] = useState(false);
+  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number } | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
   const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; classes: string[]; attributes: string[]; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
 
@@ -292,6 +308,19 @@ export default function App() {
     try {
       const summary = inspectCm93Files(files);
       const fileList = Array.from(files);
+      cm93AutoEnabledRef.current = false;
+      setCm93AutoEnabled(false);
+      cm93QuiltRequestRef.current++;
+      cm93DecodedCacheRef.current.clear();
+      cm93OverviewScaleRef.current = null;
+      setCm93QuiltStats(null);
+      if (mapRef.current) {
+        clearCm93Quilt(mapRef.current);
+        for (const layerId of ['cm93-cell-labels', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
+          if (mapRef.current.getLayer(layerId)) mapRef.current.removeLayer(layerId);
+        }
+        if (mapRef.current.getSource('cm93-active-cell')) mapRef.current.removeSource('cm93-active-cell');
+      }
       cm93FilesRef.current = fileList;
       const findTextFile = async (name: string) => {
         const file = fileList.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase());
@@ -543,6 +572,9 @@ export default function App() {
         paint: { 'text-color': '#273b43', 'text-halo-color': '#f6f1df', 'text-halo-width': 1 },
       });
       map.fitBounds([[west, south], [east, north]], { padding: 40, maxZoom: 8, duration: 600 });
+      cm93OverviewScaleRef.current = scale;
+      cm93AutoEnabledRef.current = true;
+      setCm93AutoEnabled(true);
       setFeatureCount(features.length);
       setStatus('ready');
       setMessage('Rendered ' + features.length.toLocaleString() + ' features from ' + (files.length - failed) +
@@ -552,6 +584,148 @@ export default function App() {
     } catch (error) {
       setStatus('error');
       setMessage(error instanceof Error ? error.message : 'Could not render the CM93 dataset overview.');
+    }
+  };
+
+
+  const syncCm93Quilt = useCallback(async () => {
+    const map = mapRef.current;
+    const dictionary = cm93DictionaryRef.current;
+    if (!cm93AutoEnabledRef.current || !map || !dictionary || !cm93FilesRef.current.length) return;
+
+    const requestId = ++cm93QuiltRequestRef.current;
+    const bounds = map.getBounds();
+    const selection = selectCm93ViewportCells(cm93FilesRef.current, {
+      west: bounds.getWest(),
+      south: bounds.getSouth(),
+      east: bounds.getEast(),
+      north: bounds.getNorth(),
+    }, map.getZoom(), 180);
+
+    const scaleOrder = ['Z', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
+    const overviewIndex = cm93OverviewScaleRef.current ? scaleOrder.indexOf(cm93OverviewScaleRef.current) : -1;
+    const scaleIndex = scaleOrder.indexOf(selection.scale);
+    // The overview already supplies these coarse scales; overlay only finer
+    // cells so the same CM93 features are not rendered twice.
+    if (overviewIndex >= 0 && scaleIndex <= overviewIndex) {
+      clearCm93Quilt(map);
+      setCm93QuiltStats(null);
+      setStatus('ready');
+      setMessage('Automatic CM93 detail is enabled. The overview already covers scale ' + selection.scale + '. Zoom in for finer cells.');
+      return;
+    }
+
+    if (selection.files.length === 0) {
+      clearCm93Quilt(map);
+      setCm93QuiltStats({ scale: selection.scale, cells: 0, features: 0, cached: cm93DecodedCacheRef.current.size, failed: 0 });
+      setStatus('ready');
+      setMessage('Automatic CM93 detail: no ' + selection.scale + '-scale cells cover this viewport. The overview remains visible.');
+      return;
+    }
+
+    setStatus('loading');
+    setMessage('Loading CM93 ' + selection.scale + '-scale detail: ' + selection.files.length + ' viewport cells…');
+    const features: ReturnType<typeof cm93CellToGeoJSON>['geojson']['features'] = [];
+    let failed = 0;
+    let decoded = 0;
+
+    for (let index = 0; index < selection.files.length; index++) {
+      if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
+      const file = selection.files[index];
+      const key = (file.webkitRelativePath || file.name).toLowerCase();
+      let cellFeatures = cm93DecodedCacheRef.current.get(key);
+      if (cellFeatures) {
+        // Refresh insertion order for a small LRU-style cache.
+        cm93DecodedCacheRef.current.delete(key);
+        cm93DecodedCacheRef.current.set(key, cellFeatures);
+      } else {
+        try {
+          const cell = parseCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
+          cellFeatures = cm93CellToGeoJSON(cell, dictionary).geojson.features;
+          cm93DecodedCacheRef.current.set(key, cellFeatures);
+          decoded++;
+          while (cm93DecodedCacheRef.current.size > 240) {
+            const oldest = cm93DecodedCacheRef.current.keys().next().value;
+            if (oldest === undefined) break;
+            cm93DecodedCacheRef.current.delete(oldest);
+          }
+        } catch {
+          failed++;
+          continue;
+        }
+      }
+      if (!cellFeatures) continue;
+      features.push(...cellFeatures);
+      // Yield periodically so the UI can respond while a viewport quilt is built.
+      if ((index + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+
+    if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
+    const data = { type: 'FeatureCollection', features } as never;
+    const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
+    if (existingSource?.setData) {
+      existingSource.setData(data);
+    } else {
+      clearCm93Quilt(map);
+      map.addSource('cm93-quilt', { type: 'geojson', data, tolerance: 0.5, maxzoom: 14, buffer: 0 });
+      map.addLayer({
+        id: 'cm93-quilt-fill', type: 'fill', source: 'cm93-quilt',
+        paint: { 'fill-color': '#e8c96b', 'fill-opacity': 0.34 },
+      });
+      map.addLayer({
+        id: 'cm93-quilt-lines', type: 'line', source: 'cm93-quilt',
+        paint: { 'line-color': '#554b31', 'line-width': 1.15 },
+      });
+      map.addLayer({
+        id: 'cm93-quilt-points', type: 'circle', source: 'cm93-quilt',
+        filter: ['==', ['geometry-type'], 'Point'],
+        paint: { 'circle-radius': 4, 'circle-color': '#d94b36', 'circle-stroke-color': '#fff7df', 'circle-stroke-width': 1 },
+      });
+      map.addLayer({
+        id: 'cm93-quilt-labels', type: 'symbol', source: 'cm93-quilt',
+        filter: ['==', ['geometry-type'], 'Point'],
+        layout: {
+          'text-field': ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''],
+          'text-size': 10, 'text-offset': [0, 1.1], 'text-optional': true,
+        },
+        paint: { 'text-color': '#273b43', 'text-halo-color': '#f6f1df', 'text-halo-width': 1 },
+      });
+    }
+
+    setCm93QuiltStats({
+      scale: selection.scale,
+      cells: selection.files.length,
+      features: features.length,
+      cached: cm93DecodedCacheRef.current.size,
+      failed,
+    });
+    setStatus('ready');
+    setMessage('Automatic CM93 detail: ' + selection.files.length + ' ' + selection.scale +
+      '-scale cells, ' + features.length.toLocaleString() + ' features (' + decoded +
+      ' newly decoded, ' + (selection.files.length - decoded - failed) + ' from cache).' +
+      (failed ? ' ' + failed + ' cells failed to decode.' : ''));
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !cm93AutoEnabled) return;
+    const sync = () => void syncCm93Quilt();
+    map.on('moveend', sync);
+    sync();
+    return () => { map.off('moveend', sync); };
+  }, [cm93AutoEnabled, syncCm93Quilt]);
+
+  const toggleCm93Auto = () => {
+    const enabled = !cm93AutoEnabledRef.current;
+    cm93AutoEnabledRef.current = enabled;
+    setCm93AutoEnabled(enabled);
+    if (!enabled) {
+      cm93QuiltRequestRef.current++;
+      if (mapRef.current) clearCm93Quilt(mapRef.current);
+      setCm93QuiltStats(null);
+      setMessage('Automatic CM93 detail loading disabled. The existing overview and manual cell rendering remain available.');
+    } else {
+      void syncCm93Quilt();
     }
   };
 
@@ -602,6 +776,17 @@ export default function App() {
           <label className="file-button"><span>Inspect CM93 V2 directory</span><input ref={cm93DirectoryInput} type="file" multiple onChange={(event) => onCm93Directory(event.target.files)} /></label>
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93CellAtMapCenter()}>Render CM93 cell at map centre</button>}
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93Overview()}>Render CM93 dataset overview</button>}
+          {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={toggleCm93Auto}>{cm93AutoEnabled ? 'Disable automatic CM93 detail' : 'Enable automatic CM93 detail'}</button>}
+          {cm93AutoEnabled && cm93QuiltStats && <div className="legend">
+            <span className="field-label">AUTOMATIC CM93 VIEWPORT QUILT</span>
+            <ul>
+              <li>Selected scale: {cm93QuiltStats.scale}</li>
+              <li>Viewport cells: {cm93QuiltStats.cells}</li>
+              <li>Rendered features: {cm93QuiltStats.features.toLocaleString()}</li>
+              <li>Decoded-cell cache: {cm93QuiltStats.cached} cells</li>
+              {cm93QuiltStats.failed > 0 && <li>Decode failures: {cm93QuiltStats.failed}</li>}
+            </ul>
+          </div>}
           {cm93Summary && <div className="legend cm93-summary">
             <span className="field-label">CM93 DATASET INVENTORY</span>
             <ul>
