@@ -89,29 +89,50 @@ test('does not truncate a detailed viewport at the old 180-cell limit', () => {
   assert.equal(result.scaleCounts.G, 361);
 });
 
-test('removes previous coarse data where current fine cells overlap but keeps adjacent fallback cells', () => {
-  const previousOverlapping = {
+test('keeps prior coarse coverage when current fine data replaces only part of its footprint', () => {
+  const previousCoarse = {
     type: 'Feature',
     properties: { cm93Class: 'DEPARE', cm93SourceCell: 'cm93/02100000/c/02460000.c' },
     geometry: { type: 'Polygon', coordinates: [] },
   };
-  const previousAdjacent = {
-    type: 'Feature',
-    properties: { cm93Class: 'DEPARE', cm93SourceCell: 'cm93/02100012/c/02460012.c' },
-    geometry: { type: 'Polygon', coordinates: [] },
-  };
-  const current = {
+  const currentFine = {
     type: 'Feature',
     properties: { cm93Class: 'BOYLAT', cm93SourceCell: 'cm93/02100000/g/02460000.g' },
     geometry: { type: 'Point', coordinates: [-9, 38] },
   };
 
   const merged = mergeCm93QuiltFeatures(
-    [current],
-    [previousOverlapping, previousAdjacent],
+    [currentFine],
+    [previousCoarse],
     new Set(['cm93/02100000/g/02460000.g']),
   );
-  assert.deepEqual(merged, [current, previousAdjacent]);
+  assert.deepEqual(merged, [currentFine, previousCoarse]);
+});
+
+test('discards prior coarse data when current fine cells fully cover its footprint', () => {
+  const previousCoarse = {
+    type: 'Feature',
+    properties: { cm93Class: 'DEPARE', cm93SourceCell: 'cm93/02100000/c/02460000.c' },
+    geometry: { type: 'Polygon', coordinates: [] },
+  };
+  const currentFeatures = [];
+  const selectedKeys = new Set();
+  for (let latitude = 246; latitude < 258; latitude++) {
+    for (let longitude = 0; longitude < 12; longitude++) {
+      const filename = String(latitude).padStart(4, '0') + String(longitude).padStart(4, '0') + '.g';
+      const key = 'cm93/02100000/g/' + filename;
+      selectedKeys.add(key);
+      currentFeatures.push({
+        type: 'Feature',
+        properties: { cm93Class: 'BOYLAT', cm93SourceCell: key },
+        geometry: { type: 'Point', coordinates: [-9 + longitude / 3, 38 + (latitude - 246) / 3] },
+      });
+    }
+  }
+
+  const merged = mergeCm93QuiltFeatures(currentFeatures, [previousCoarse], selectedKeys);
+  assert.equal(merged.length, currentFeatures.length);
+  assert.ok(!merged.includes(previousCoarse));
 });
 
 test('retains legacy fallback keys when their cell footprint cannot be parsed', () => {

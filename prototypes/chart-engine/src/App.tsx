@@ -798,10 +798,13 @@ export default function App() {
       setMessage('No usable features at target scale ' + selection.scale + '. Keeping the previous chart coverage until useful detail is available.');
       return;
     }
-    const currentCellKeys = new Set(selection.files.map((file) => (file.webkitRelativePath || file.name).toLowerCase()));
-    // A partially populated target-scale quilt must not erase useful coverage
-    // from the previous zoom. Replace cells that are selected now; retain
-    // features from prior cells only where this selection has no corresponding cell.
+    // Only cells that produced usable features can replace older coverage.
+    // A file that decodes to zero features (or fails to decode) is not evidence
+    // that the geographic area has been replaced at this scale.
+    const currentCellKeys = new Set(features
+      .map((feature) => feature.properties?.cm93SourceCell)
+      .filter((key): key is string => typeof key === 'string')
+      .map((key) => key.toLowerCase()));
     const quiltFeatures = mergeCm93QuiltFeatures(features, cm93RenderedFeaturesRef.current, currentCellKeys);
     const data = { type: 'FeatureCollection', features: quiltFeatures } as never;
     const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
