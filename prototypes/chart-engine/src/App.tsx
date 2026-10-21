@@ -712,7 +712,7 @@ export default function App() {
     const sync = () => void syncCm93Quilt();
     map.on('moveend', sync);
     sync();
-    return () => map.off('moveend', sync);
+    return () => { map.off('moveend', sync); };
   }, [cm93AutoEnabled, syncCm93Quilt]);
 
   const toggleCm93Auto = () => {
