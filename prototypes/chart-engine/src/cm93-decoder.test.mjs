@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, cm93CellToGeoJSON, cm93GridPointToWgs84, parseCm93Dictionaries } from './cm93-decoder.ts';
+import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, assembleCm93VectorPaths, cm93CellToGeoJSON, cm93GridPointToWgs84, parseCm93Dictionaries } from './cm93-decoder.ts';
 
 const firstCellHeader = Uint8Array.from([
   0x48, 0xc5, 0x49, 0x73, 0xc5, 0xc5, 0x74, 0x40, 0xc5, 0xc5,
@@ -152,4 +152,48 @@ test('assembles decoded CM93 point features and typed attributes into GeoJSON', 
     : [];
   assert.ok(Math.abs(coordinates[0] - 10) < 1e-3);
   assert.ok(coordinates[1] > -52 && coordinates[1] < -50);
+});
+
+
+test('keeps disconnected CM93 vector segments as separate paths', () => {
+  const vectors = [
+    { points: [[0, 0], [1, 1]] },
+    { points: [[1, 1], [2, 2]] },
+    { points: [[10, 10], [11, 11]] },
+  ];
+  const paths = assembleCm93VectorPaths(vectors, [
+    { index: 0, segmentUsage: 0 },
+    { index: 1, segmentUsage: 0 },
+    { index: 2, segmentUsage: 0 },
+  ]);
+  assert.deepEqual(paths, [
+    [[0, 0], [1, 1], [2, 2]],
+    [[10, 10], [11, 11]],
+  ]);
+});
+
+test('honours the segment reverse flag while joining connected vectors', () => {
+  const vectors = [
+    { points: [[0, 0], [1, 1]] },
+    { points: [[2, 2], [1, 1]] },
+  ];
+  const paths = assembleCm93VectorPaths(vectors, [
+    { index: 0, segmentUsage: 0 },
+    { index: 1, segmentUsage: 4 },
+  ]);
+  assert.deepEqual(paths, [[[0, 0], [1, 1], [2, 2]]]);
+});
+
+test('does not invent a bridge between separated vector endpoints', () => {
+  const vectors = [
+    { points: [[0, 0], [1, 1]] },
+    { points: [[3, 3], [4, 4]] },
+  ];
+  const paths = assembleCm93VectorPaths(vectors, [
+    { index: 0, segmentUsage: 0 },
+    { index: 1, segmentUsage: 0 },
+  ]);
+  assert.equal(paths.length, 2);
+  assert.equal(paths[0].at(-1)?.[0], 1);
+  assert.equal(paths[1][0][0], 3);
 });
