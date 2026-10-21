@@ -31,13 +31,28 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. The hosted demo downloads the two sample chart ZIPs during the Pages build. Local ENC files can be selected with **Load ENC file**.
+Open the local URL printed by Vite. The hosted demo downloads the sample NOAA/CHS ENC ZIPs during the Pages build. Local ENC files can be selected with **Load ENC file**. An optional MBTiles raster chart can also be converted into static XYZ PNG tiles and deployed alongside the ENC charts.
 
 ## GitHub Pages demo
 
 The GitHub Actions workflow builds this prototype and downloads the sample NOAA ZIPs into the generated static site. After GitHub Pages is configured to use **GitHub Actions** in repository Settings → Pages, pushes to `poc/chart-engine-noaa-enc` deploy the demo at:
 
 https://ruicunha.github.io/Azimute-One/
+
+## Optional MBTiles raster charts
+
+The renderer can display raster charts stored in an MBTiles SQLite database. During the Pages build, `scripts/mbtiles_to_tiles.py` extracts the tile blobs, converts MBTiles TMS row numbering to MapLibre XYZ numbering, and writes `public/cmap-tiles/{z}/{x}/{y}.png` plus `metadata.json`. If metadata is present, the UI exposes a **Show Portugal raster chart** toggle.
+
+To include a raster chart in the hosted demo:
+
+1. Ensure you have permission to download, convert, and publicly redistribute the chart tiles. A successful render or public download URL does not grant redistribution rights.
+2. Host an authorized ZIP archive containing an `.mbtiles` database at a direct download URL.
+3. Add a repository Actions secret named `CMAP_MBTILES_URL` containing that direct URL (Repository Settings → Secrets and variables → Actions).
+4. Re-run the **Deploy chart-engine prototype to GitHub Pages** workflow.
+
+When the secret is absent, the build skips the optional raster dataset and deploys the existing ENC demo as usual. The raster chart is published as individual PNG tiles, so the deployed site will contain the extracted tile data, not just the ZIP. For large datasets this increases deployment size substantially. The source must be a ZIP containing an MBTiles/SQLite database; raw proprietary C-MAP/ Navionics chart formats are not supported by this conversion script.
+
+The Portuguese C-MAP archive used during development was rendered locally, but is not configured for public deployment until redistribution rights are confirmed.
 
 ## Sample chart collection
 
