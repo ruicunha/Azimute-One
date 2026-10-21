@@ -73,7 +73,7 @@ export function selectCm93ViewportCells(
   files: Cm93CellFile[],
   bounds: Cm93ViewportBounds,
   zoom: number,
-  maxCells = 300,
+  maxCells = 1200,
 ): Cm93ViewportSelection {
   const targetScale = cm93ScaleForZoom(zoom);
   const targetIndex = CM93_SCALE_ORDER.indexOf(targetScale);
