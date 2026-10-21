@@ -30,7 +30,7 @@ test('selects only cells matching the chosen scale and viewport grid when availa
 });
 
 test('falls back to the nearest coarser cell when the target-scale cell is missing', () => {
-  const coarse = cell('C', '03841044.C', 'cm93/03301020/C/03841044.C');
+  const coarse = cell('C', '03781044.C', 'cm93/03301020/C/03781044.C');
   const result = selectCm93ViewportCells([coarse], {
     west: -9.3, south: 38.5, east: -8.9, north: 38.9,
   }, 8);
@@ -42,7 +42,7 @@ test('falls back to the nearest coarser cell when the target-scale cell is missi
 
 test('prefers a finer cell in one footprint and uses coarse fallback for an adjacent missing footprint', () => {
   const fine = cell('D', '03841050.D', 'cm93/03301020/D/03841050.D');
-  const coarse = cell('03841044.C', '03841044.C', 'cm93/03301020/C/03841044.C');
+  const coarse = cell('C', '03781044.C', 'cm93/03301020/C/03781044.C');
   const result = selectCm93ViewportCells([fine, coarse], {
     west: -9.4, south: 38.4, east: -8.8, north: 38.9,
   }, 8);
