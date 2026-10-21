@@ -89,16 +89,16 @@ test('does not truncate a detailed viewport at the old 180-cell limit', () => {
   assert.equal(result.scaleCounts.G, 361);
 });
 
-test('keeps prior coarse coverage when current fine data replaces only part of its footprint', () => {
+test('does not carry stale previous-scale features into the current viewport quilt', () => {
   const previousCoarse = {
     type: 'Feature',
-    properties: { cm93Class: 'DEPARE', cm93SourceCell: 'cm93/02100000/c/02460000.c' },
-    geometry: { type: 'Polygon', coordinates: [] },
+    properties: { cm93Class: 'DEPCNT', cm93SourceCell: 'cm93/02100000/c/02460000.c' },
+    geometry: { type: 'LineString', coordinates: [[-9, 38], [-8.9, 38.1]] },
   };
   const currentFine = {
     type: 'Feature',
-    properties: { cm93Class: 'BOYLAT', cm93SourceCell: 'cm93/02100000/g/02460000.g' },
-    geometry: { type: 'Point', coordinates: [-9, 38] },
+    properties: { cm93Class: 'DEPCNT', cm93SourceCell: 'cm93/02100000/g/02460000.g' },
+    geometry: { type: 'LineString', coordinates: [[-9, 38], [-8.95, 38.05]] },
   };
 
   const merged = mergeCm93QuiltFeatures(
@@ -106,41 +106,24 @@ test('keeps prior coarse coverage when current fine data replaces only part of i
     [previousCoarse],
     new Set(['cm93/02100000/g/02460000.g']),
   );
-  assert.deepEqual(merged, [currentFine, previousCoarse]);
-});
-
-test('discards prior coarse data when current fine cells fully cover its footprint', () => {
-  const previousCoarse = {
-    type: 'Feature',
-    properties: { cm93Class: 'DEPARE', cm93SourceCell: 'cm93/02100000/c/02460000.c' },
-    geometry: { type: 'Polygon', coordinates: [] },
-  };
-  const currentFeatures = [];
-  const selectedKeys = new Set();
-  for (let latitude = 246; latitude < 258; latitude++) {
-    for (let longitude = 0; longitude < 12; longitude++) {
-      const filename = String(latitude).padStart(4, '0') + String(longitude).padStart(4, '0') + '.g';
-      const key = 'cm93/02100000/g/' + filename;
-      selectedKeys.add(key);
-      currentFeatures.push({
-        type: 'Feature',
-        properties: { cm93Class: 'BOYLAT', cm93SourceCell: key },
-        geometry: { type: 'Point', coordinates: [-9 + longitude / 3, 38 + (latitude - 246) / 3] },
-      });
-    }
-  }
-
-  const merged = mergeCm93QuiltFeatures(currentFeatures, [previousCoarse], selectedKeys);
-  assert.equal(merged.length, currentFeatures.length);
+  assert.deepEqual(merged, [currentFine]);
   assert.ok(!merged.includes(previousCoarse));
 });
 
-test('retains legacy fallback keys when their cell footprint cannot be parsed', () => {
+test('returns an empty current quilt instead of resurrecting stale prior-render data', () => {
+  const previous = {
+    type: 'Feature',
+    properties: { cm93Class: 'DEPCNT', cm93SourceCell: 'cm93/02100000/c/02460000.c' },
+    geometry: { type: 'LineString', coordinates: [[-9, 38], [-8.9, 38.1]] },
+  };
+  assert.deepEqual(mergeCm93QuiltFeatures([], [previous], new Set()), []);
+});
+
+test('does not retain unrecognized prior-render features', () => {
   const legacy = {
     type: 'Feature',
     properties: { cm93Class: 'DEPARE', cm93SourceCell: 'coarse-cell.c' },
     geometry: { type: 'Polygon', coordinates: [] },
   };
-  const merged = mergeCm93QuiltFeatures([], [legacy], new Set(['fine-cell.g']));
-  assert.deepEqual(merged, [legacy]);
+  assert.deepEqual(mergeCm93QuiltFeatures([], [legacy], new Set(['fine-cell.g'])), []);
 });

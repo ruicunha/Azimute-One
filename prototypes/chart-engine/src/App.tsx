@@ -790,12 +790,17 @@ export default function App() {
     }
 
     if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
-    // Never replace a valid quilt with a blank result while transitioning to a
-    // scale whose selected cells contain no usable features. Keep the last good
-    // portrayal until a useful quilt can be built.
+    // Never leave features from the previous zoom or viewport visible when
+    // the current selection has no usable data. The selector has already tried
+    // available coarser fallbacks, so stale prior-render features must be cleared.
     if (features.length === 0) {
+      const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
+      if (existingSource?.setData) {
+        existingSource.setData({ type: 'FeatureCollection', features: [] } as never);
+      }
+      cm93RenderedFeaturesRef.current = [];
       setStatus('ready');
-      setMessage('No usable features at target scale ' + selection.scale + '. Keeping the previous chart coverage until useful detail is available.');
+      setMessage('No usable CM93 features in the current viewport at target scale ' + selection.scale + ' or its available coarser fallbacks.');
       return;
     }
     // Only cells that produced usable features can replace older coverage.

@@ -132,98 +132,21 @@ export function selectCm93ViewportCells(
   return { scale: targetScale, files: result.map((item) => item.file), scaleCounts };
 }
 
-type Cm93CellFootprint = { south: number; north: number; west: number; east: number };
-
-function cm93CellFootprint(sourceCell: string): Cm93CellFootprint | null {
-  const match = sourceCell.toLowerCase().match(/(\d{4})(\d{4})\.([zabcdefg])$/);
-  if (!match) return null;
-  const latitudeCell = Number(match[1]) - 30;
-  const longitudeCell = Number(match[2]);
-  const scale = match[3].toUpperCase() as Cm93ScaleCode;
-  const step = CM93_SCALE_STEPS[scale];
-  return {
-    south: latitudeCell,
-    north: latitudeCell + step,
-    west: longitudeCell,
-    east: longitudeCell + step,
-  };
-}
-
 /**
- * A prior cell can be discarded only when current, usable cell coverage
- * replaces its entire footprint. Any overlap is not enough: a finer cell may
- * cover just one part of a coarser cell, and discarding the whole coarse cell
- * would create holes in the quilt.
+ * Compose one viewport quilt from the cells selected for the current zoom.
  *
- * Coordinates are in CM93 grid units. Shifted longitude copies account for
- * the 1080-unit wrap at 360 degrees.
- */
-function footprintFullyCoveredBySelected(
-  footprint: Cm93CellFootprint,
-  selected: Cm93CellFootprint[],
-): boolean {
-  const latitudeCuts = new Set<number>([footprint.south, footprint.north]);
-  for (const candidate of selected) {
-    const south = Math.max(footprint.south, candidate.south);
-    const north = Math.min(footprint.north, candidate.north);
-    if (south < north) {
-      latitudeCuts.add(south);
-      latitudeCuts.add(north);
-    }
-  }
-  const sortedLatitudes = [...latitudeCuts].sort((a, b) => a - b);
-
-  for (let index = 0; index < sortedLatitudes.length - 1; index++) {
-    const bandSouth = sortedLatitudes[index];
-    const bandNorth = sortedLatitudes[index + 1];
-    if (bandSouth >= bandNorth) continue;
-    const midLatitude = (bandSouth + bandNorth) / 2;
-    const intervals: Array<[number, number]> = [];
-
-    for (const candidate of selected) {
-      if (candidate.south > midLatitude || candidate.north < midLatitude) continue;
-      for (const shift of [-1080, 0, 1080]) {
-        const west = Math.max(footprint.west, candidate.west + shift);
-        const east = Math.min(footprint.east, candidate.east + shift);
-        if (west < east) intervals.push([west, east]);
-      }
-    }
-
-    intervals.sort((a, b) => a[0] - b[0]);
-    let coveredUntil = footprint.west;
-    for (const [west, east] of intervals) {
-      if (west > coveredUntil) break;
-      coveredUntil = Math.max(coveredUntil, east);
-      if (coveredUntil >= footprint.east) break;
-    }
-    if (coveredUntil < footprint.east) return false;
-  }
-  return sortedLatitudes.length > 1;
-}
-
-/**
- * Merge current usable features with prior-scale fallback features.
+ * Do not carry previous-render features forward. The selector already chooses
+ * the finest available target cell and a coarser fallback for each target
+ * footprint. Retaining arbitrary prior-render features causes stale contours
+ * and symbols from another zoom or viewport to be drawn over the current quilt.
  *
- * selectedCellKeys must contain only cells that produced usable features in
- * the current render. Empty or failed cells do not replace prior coverage.
- * A previous cell is removed only if the current usable footprints cover its
- * entire footprint, rather than merely touching any part of it.
+ * The previous arguments remain in the signature for compatibility with the
+ * renderer call site, but are intentionally not used.
  */
 export function mergeCm93QuiltFeatures(
   currentFeatures: GeoJSON.Feature[],
-  previousFeatures: GeoJSON.Feature[],
-  selectedCellKeys: Set<string>,
+  _previousFeatures: GeoJSON.Feature[],
+  _selectedCellKeys: Set<string>,
 ): GeoJSON.Feature[] {
-  const selectedFootprints = [...selectedCellKeys]
-    .map(cm93CellFootprint)
-    .filter((footprint): footprint is Cm93CellFootprint => footprint !== null);
-  const fallback = previousFeatures.filter((feature) => {
-    const sourceCell = feature.properties?.cm93SourceCell;
-    if (typeof sourceCell !== 'string' || selectedCellKeys.has(sourceCell.toLowerCase())) return false;
-    const previousFootprint = cm93CellFootprint(sourceCell);
-    // Preserve unrecognized legacy keys; without a known footprint we cannot
-    // prove that current data fully replaces them.
-    return !previousFootprint || !footprintFullyCoveredBySelected(previousFootprint, selectedFootprints);
-  });
-  return [...currentFeatures, ...fallback];
+  return currentFeatures;
 }
