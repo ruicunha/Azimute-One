@@ -704,7 +704,7 @@ export default function App() {
       south: bounds.getSouth(),
       east: bounds.getEast(),
       north: bounds.getNorth(),
-    }, map.getZoom(), 180);
+    }, map.getZoom(), 1200);
 
     if (selection.files.length === 0) {
       // Do not clear the last good quilt just because the current scale/path
