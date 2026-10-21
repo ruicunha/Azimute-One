@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, parseCm93Dictionaries } from './cm93-decoder.ts';
+import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, cm93GridPointToWgs84, parseCm93Dictionaries } from './cm93-decoder.ts';
 
 const firstCellHeader = Uint8Array.from([
   0x48, 0xc5, 0x49, 0x73, 0xc5, 0xc5, 0x74, 0x40, 0xc5, 0xc5,
@@ -67,4 +67,30 @@ test('decodes common CM93 string and integer attributes using dictionary types',
     ['CSCALE', 3000000],
   ]);
   assert.ok(attributes.every((attribute) => attribute.supported));
+});
+
+test('converts CM93 16-bit grid endpoints using the cell Mercator bounds', () => {
+  const metadata = {
+    geographicBounds: { west: 0, south: -60, east: 20, north: -40 },
+    projectedBounds: {
+      west: 0,
+      south: -8400068.5658788,
+      east: 2226477.4513319735,
+      north: -4866133.821880401,
+    },
+    vectorRecordCount: 0,
+    vectorPointCount: 0,
+    point3dRecordCount: 0,
+    point3dPointCount: 0,
+    point2dCount: 0,
+    featureCount: 0,
+    relatedObjectPointerCount: 0,
+    attributeByteCount: 0,
+  };
+  const southwest = cm93GridPointToWgs84(metadata, 0, 0);
+  const northeast = cm93GridPointToWgs84(metadata, 65535, 65535);
+  assert.ok(Math.abs(southwest[0]) < 1e-8);
+  assert.ok(Math.abs(southwest[1] - (-60)) < 1e-6);
+  assert.ok(Math.abs(northeast[0] - 20) < 1e-6);
+  assert.ok(Math.abs(northeast[1] - (-40)) < 1e-6);
 });
