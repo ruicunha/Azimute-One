@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, parseCm93Dictionaries } from './cm93-decoder.ts';
+import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, parseCm93Dictionaries } from './cm93-decoder.ts';
 
 const firstCellHeader = Uint8Array.from([
   0x48, 0xc5, 0x49, 0x73, 0xc5, 0xc5, 0x74, 0x40, 0xc5, 0xc5,
@@ -50,4 +50,21 @@ test('coordinate conversion rejects impossible WGS84 coordinates', () => {
   assert.ok(Math.abs(point[0] - (-8.99)) < 1e-9);
   assert.ok(Math.abs(point[1] - 38.02) < 1e-9);
   assert.throws(() => cm93OffsetsToWgs84(179, 89, 1000, 1000, 1, 1), /outside WGS84 bounds/);
+});
+
+test('decodes common CM93 string and integer attributes using dictionary types', () => {
+  const dictionary = parseCm93Dictionaries(
+    'LIGHTS|55|P|8|Light|CATLIT|OBJNAM',
+    'CPDATE|150|aSTRING\\nCSCALE|151|aLONG',
+  );
+  const raw = Uint8Array.from([
+    150, ...new TextEncoder().encode('20050629'), 0,
+    151, 0xc0, 0xc6, 0x2d, 0x00,
+  ]);
+  const attributes = decodeCm93FeatureAttributes(raw, 2, dictionary);
+  assert.deepEqual(attributes.map((attribute) => [attribute.name, attribute.value]), [
+    ['CPDATE', '20050629'],
+    ['CSCALE', 3000000],
+  ]);
+  assert.ok(attributes.every((attribute) => attribute.supported));
 });
