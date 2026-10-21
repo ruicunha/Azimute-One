@@ -7,7 +7,7 @@ import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-c
 import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
 import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
-import { mergeCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt';
+import { clipCm93FeaturesToBounds, mergeCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -723,22 +723,14 @@ export default function App() {
     }, map.getZoom(), 1200);
 
     if (selection.files.length === 0) {
-      // Do not clear the last good quilt just because the current scale/path
-      // lookup temporarily finds no cell. This avoids a blank flash during
-      // scale transitions; the previous GeoJSON remains geographically placed
-      // and naturally moves out of view as the user pans away.
-      setCm93QuiltStats({
-        scale: selection.scale,
-        cells: 0,
-        features: 0,
-        cached: cm93DecodedCacheRef.current.size,
-        failed: 0,
-        classes: [],
-      });
+      // No target or coarser cell exists for this viewport: clear the old quilt
+      // rather than showing features from the previous viewport/zoom.
+      const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
+      if (existingSource?.setData) existingSource.setData({ type: 'FeatureCollection', features: [] } as never);
+      cm93RenderedFeaturesRef.current = [];
+      setCm93QuiltStats({ scale: selection.scale, cells: 0, features: 0, cached: cm93DecodedCacheRef.current.size, failed: 0, classes: [] });
       setStatus('ready');
-      setMessage('Automatic CM93 detail: no cells at scale ' + selection.scale +
-        ' or any coarser fallback scale cover this viewport.' +
-        (map.getSource('cm93-active-cell') ? ' The overview remains visible.' : ' No CM93 coverage is available here.'));
+      setMessage('No CM93 cell exists at the target scale or any coarser scale for this viewport.');
       return;
     }
 
@@ -748,45 +740,65 @@ export default function App() {
     let failed = 0;
     let decoded = 0;
     let emptyCells = 0;
+    let fallbackGroups = 0;
     const failedCellNames: string[] = [];
 
-    for (let index = 0; index < selection.files.length; index++) {
+    // Resolve every target-scale footprint independently. If its target cell
+    // is absent, fails to decode, or has no usable features, try the next
+    // coarser candidate until one actually supplies data.
+    for (let groupIndex = 0; groupIndex < selection.candidateGroups.length; groupIndex++) {
       if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
-      const file = selection.files[index];
-      const key = (file.webkitRelativePath || file.name).toLowerCase();
-      let cellFeatures = cm93DecodedCacheRef.current.get(key);
-      if (cellFeatures) {
-        // Refresh insertion order for a small LRU-style cache.
-        cm93DecodedCacheRef.current.delete(key);
-        cm93DecodedCacheRef.current.set(key, cellFeatures);
-      } else {
-        try {
-          const cell = parseCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
-          cellFeatures = cm93CellToGeoJSON(cell, dictionary).geojson.features;
-          cm93DecodedCacheRef.current.set(key, cellFeatures);
-          decoded++;
-          while (cm93DecodedCacheRef.current.size > 240) {
-            const oldest = cm93DecodedCacheRef.current.keys().next().value;
-            if (oldest === undefined) break;
-            cm93DecodedCacheRef.current.delete(oldest);
+      const group = selection.candidateGroups[groupIndex];
+      let groupResolved = false;
+
+      for (let candidateIndex = 0; candidateIndex < group.candidates.length; candidateIndex++) {
+        const candidate = group.candidates[candidateIndex];
+        const file = candidate.file;
+        const key = (file.webkitRelativePath || file.name).toLowerCase();
+        let cellFeatures = cm93DecodedCacheRef.current.get(key);
+
+        if (!cellFeatures) {
+          try {
+            const cell = parseCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
+            cellFeatures = cm93CellToGeoJSON(cell, dictionary).geojson.features;
+            cm93DecodedCacheRef.current.set(key, cellFeatures);
+            decoded++;
+            while (cm93DecodedCacheRef.current.size > 240) {
+              const oldest = cm93DecodedCacheRef.current.keys().next().value;
+              if (oldest === undefined) break;
+              cm93DecodedCacheRef.current.delete(oldest);
+            }
+          } catch {
+            failed++;
+            failedCellNames.push(file.name);
+            continue;
           }
-        } catch {
-          failed++;
-          failedCellNames.push(file.name);
+        }
+
+        if (!cellFeatures || cellFeatures.length === 0) {
+          emptyCells++;
           continue;
         }
+
+        let usable = cellFeatures.map((feature) => ({
+          ...feature,
+          properties: { ...(feature.properties ?? {}), cm93SourceCell: key, cm93SourceScale: candidate.scale },
+        }));
+        if (candidate.scale !== selection.scale) {
+          usable = clipCm93FeaturesToBounds(usable, group.bounds) as typeof usable;
+        }
+        if (usable.length === 0) continue;
+
+        features.push(...usable);
+        groupResolved = true;
+        if (candidateIndex > 0) fallbackGroups++;
+        break;
       }
-      if (!cellFeatures) continue;
-      if (cellFeatures.length === 0) emptyCells++;
-      // Tag each feature with its source cell. When a finer cell has no usable
-      // information, this lets the next quilt retain older-scale features from
-      // cells that are not covered by the new selection instead of blanking them.
-      features.push(...cellFeatures.map((feature) => ({
-        ...feature,
-        properties: { ...(feature.properties ?? {}), cm93SourceCell: key },
-      })));
-      // Yield periodically so the UI can respond while a viewport quilt is built.
-      if ((index + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      // An unresolved group intentionally contributes no chart features.
+      // Crucially, we never keep stale features from the previous zoom.
+      if ((groupIndex + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      void groupResolved;
     }
 
     if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
@@ -803,14 +815,7 @@ export default function App() {
       setMessage('No usable CM93 features in the current viewport at target scale ' + selection.scale + ' or its available coarser fallbacks.');
       return;
     }
-    // Only cells that produced usable features can replace older coverage.
-    // A file that decodes to zero features (or fails to decode) is not evidence
-    // that the geographic area has been replaced at this scale.
-    const currentCellKeys = new Set(features
-      .map((feature) => feature.properties?.cm93SourceCell)
-      .filter((key): key is string => typeof key === 'string')
-      .map((key) => key.toLowerCase()));
-    const quiltFeatures = mergeCm93QuiltFeatures(features, cm93RenderedFeaturesRef.current, currentCellKeys);
+    const quiltFeatures = mergeCm93QuiltFeatures(features);
     const data = { type: 'FeatureCollection', features: quiltFeatures } as never;
     const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
     if (existingSource?.setData) {
