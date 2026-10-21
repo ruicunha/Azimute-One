@@ -7,7 +7,7 @@ import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-c
 import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
 import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
-import { selectCm93ViewportCells } from './cm93-quilt';
+import { mergeCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -795,14 +795,10 @@ export default function App() {
       return;
     }
     const currentCellKeys = new Set(selection.files.map((file) => (file.webkitRelativePath || file.name).toLowerCase()));
-    const previousFallbackFeatures = cm93RenderedFeaturesRef.current.filter((feature) => {
-      const sourceCell = feature.properties?.cm93SourceCell;
-      return typeof sourceCell === 'string' && !currentCellKeys.has(sourceCell);
-    });
     // A partially populated target-scale quilt must not erase useful coverage
     // from the previous zoom. Replace cells that are selected now; retain
     // features from prior cells only where this selection has no corresponding cell.
-    const quiltFeatures = [...features, ...previousFallbackFeatures];
+    const quiltFeatures = mergeCm93QuiltFeatures(features, cm93RenderedFeaturesRef.current, currentCellKeys);
     const data = { type: 'FeatureCollection', features: quiltFeatures } as never;
     const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
     if (existingSource?.setData) {
