@@ -55,7 +55,7 @@ test('coordinate conversion rejects impossible WGS84 coordinates', () => {
 test('decodes common CM93 string and integer attributes using dictionary types', () => {
   const dictionary = parseCm93Dictionaries(
     'LIGHTS|55|P|8|Light|CATLIT|OBJNAM',
-    'CPDATE|150|aSTRING\\nCSCALE|151|aLONG',
+    'CPDATE|150|aSTRING\nCSCALE|151|aLONG',
   );
   const raw = Uint8Array.from([
     150, ...new TextEncoder().encode('20050629'), 0,
