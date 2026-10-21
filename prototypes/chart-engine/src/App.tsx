@@ -21,6 +21,7 @@ type RasterChartMetadata = {
 
 const emptyStyle: maplibregl.StyleSpecification = {
   version: 8,
+  glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
   sources: {},
   layers: [{ id: 'water-background', type: 'background', paint: { 'background-color': '#b9dce5' } }],
 };
@@ -852,7 +853,12 @@ export default function App() {
     const next = visibleCm93PointClassesRef.current.includes(name) ? visibleCm93PointClassesRef.current.filter((item) => item !== name) : [...visibleCm93PointClassesRef.current, name];
     visibleCm93PointClassesRef.current = next; setVisibleCm93PointClasses(next);
     const map = mapRef.current; if (!map) return;
-    for (const layerId of ['cm93-cell-icons', 'cm93-quilt-icons']) if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+    for (const layerId of ['cm93-cell-icons', 'cm93-quilt-icons']) {
+      if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+    }
+    for (const layerId of ['cm93-cell-labels', 'cm93-quilt-labels']) {
+      if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+    }
   };
 
   const toggleCmapRaster = () => {
