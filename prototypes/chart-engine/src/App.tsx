@@ -6,7 +6,7 @@ import { unzipSync } from 'fflate';
 import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-catalog';
 import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
-import { parseCm93Dictionaries } from './cm93-decoder';
+import { decodeCm93Cell, parseCm93Dictionaries } from './cm93-decoder';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -53,6 +53,7 @@ export default function App() {
   const [cmapVisible, setCmapVisible] = useState(false);
   const [cm93Summary, setCm93Summary] = useState<Cm93DatasetSummary | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
+  const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number } } | null>(null);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -268,18 +269,36 @@ export default function App() {
         const dictionary = parseCm93Dictionaries(objectDictionary, attributeDictionary);
         dictionaryStats = { objects: dictionary.objectsByCode.size, attributes: dictionary.attributesByCode.size };
       }
+      const cellFiles = fileList.filter((file) => /\\.[A-GZ]$/i.test(file.name))
+        .sort((left, right) => (left.webkitRelativePath || left.name).localeCompare(right.webkitRelativePath || right.name));
+      const sample = cellFiles.slice(0, Math.min(12, cellFiles.length));
+      const failures: string[] = [];
+      let valid = 0;
+      let example: { name: string; headerLength: number; table1Length: number; table2Length: number } | undefined;
+      for (const file of sample) {
+        try {
+          const header = decodeCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
+          valid++;
+          if (!example) example = { name: file.webkitRelativePath || file.name, headerLength: header.headerLength, table1Length: header.table1Length, table2Length: header.table2Length };
+        } catch (error) {
+          failures.push((file.webkitRelativePath || file.name) + ': ' + (error instanceof Error ? error.message : 'header validation failed'));
+        }
+      }
+      const cellStats = { checked: sample.length, valid, failures, example };
+      setCm93CellStats(cellStats);
       setCm93DictionaryStats(dictionaryStats);
       setCm93Summary(summary);
       setMessage(summary.isLikelyCm93V2
-        ? 'CM93 V2 dataset recognized: ' + summary.regionCount + ' regions, ' + summary.fileCount.toLocaleString() + ' files, ' + (dictionaryStats?.objects.toLocaleString() ?? 'unparsed') + ' object classes and ' + (dictionaryStats?.attributes.toLocaleString() ?? 'unparsed') + ' attributes in the dictionaries. Cell record decoding is still incomplete.'
+        ? 'CM93 V2 dataset recognized: ' + summary.regionCount + ' regions, ' + summary.fileCount.toLocaleString() + ' files. Cell headers validated: ' + valid + '/' + sample.length + '; ' + (dictionaryStats?.objects.toLocaleString() ?? 'unparsed') + ' object classes and ' + (dictionaryStats?.attributes.toLocaleString() ?? 'unparsed') + ' attributes.'
         : 'The selected directory does not look like a complete CM93 V2 dataset. Review the validation details below.');
-      setStatus(summary.isLikelyCm93V2 ? 'ready' : 'error');
+      setStatus(summary.isLikelyCm93V2 && valid === sample.length ? 'ready' : 'error');
       setChartName(summary.isLikelyCm93V2 ? 'CM93 V2 — ' + summary.rootName : 'Unrecognized CM93 dataset');
       setSource('CM93 V2 directory');
       setFeatureCount(null);
     } catch (error) {
       setCm93Summary(null);
       setCm93DictionaryStats(null);
+      setCm93CellStats(null);
       setStatus('error');
       setMessage(error instanceof Error ? error.message : 'Could not inspect the selected CM93 directory.');
     }
@@ -342,7 +361,12 @@ export default function App() {
               {cm93DictionaryStats && <li>Parsed dictionaries: {cm93DictionaryStats.objects.toLocaleString()} object classes · {cm93DictionaryStats.attributes.toLocaleString()} attributes</li>}
             </ul>
             {cm93Summary.warnings.length > 0 && <p>{cm93Summary.warnings.join(' ')}</p>}
-            <p>Dictionary parsing and bounds-checked binary/coordinate primitives are implemented. Cell framing, byte substitution and feature geometry extraction remain unverified; no CM93 features are drawn yet.</p>
+            <p>Independent byte substitution and cell-header validation are implemented. A sample of up to 12 real cells is checked for consistent header and table boundaries. Geometry extraction and portrayal remain outstanding.</p>
+            {cm93CellStats && <ul>
+              <li>Cell header checks: {cm93CellStats.valid}/{cm93CellStats.checked} passed</li>
+              {cm93CellStats.example && <li>Example {cm93CellStats.example.name}: header {cm93CellStats.example.headerLength} bytes, table 1 {cm93CellStats.example.table1Length.toLocaleString()} bytes, table 2 {cm93CellStats.example.table2Length.toLocaleString()} bytes</li>}
+              {cm93CellStats.failures.map((failure) => <li key={failure}>{failure}</li>)}
+            </ul>}
           </div>}
           {cmapMetadata && <button className="secondary-button" type="button" onClick={toggleCmapRaster}>{cmapVisible ? 'Hide Portugal raster chart' : 'Show Portugal raster chart'}</button>}
           <div className="legend">
