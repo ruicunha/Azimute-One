@@ -301,3 +301,245 @@ export function decodeCm93Cell(bytes: Uint8Array, filename: string): Cm93CellHea
   for (let i = 0; i < bytes.length; i++) decoded[i] = CM93_DECODE_MAP[bytes[i]];
   return { ...header, decodedHeader: decoded.slice(0, header.headerLength) };
 }
+
+
+export type Cm93CellMetadata = {
+  geographicBounds: { west: number; south: number; east: number; north: number };
+  projectedBounds: { west: number; south: number; east: number; north: number };
+  vectorRecordCount: number;
+  vectorPointCount: number;
+  point3dRecordCount: number;
+  point3dPointCount: number;
+  point2dCount: number;
+  featureCount: number;
+  relatedObjectPointerCount: number;
+  attributeByteCount: number;
+};
+
+export type Cm93VectorRecord = { points: Array<[number, number]> };
+export type Cm93Point3dRecord = { points: Array<[number, number, number]> };
+export type Cm93GeometryReference =
+  | { kind: 'area' | 'line'; vectors: Array<{ index: number; segmentUsage: number }> }
+  | { kind: 'point'; index: number }
+  | { kind: 'point3d'; index: number }
+  | { kind: 'unknown' };
+
+export type Cm93FeatureRecord = {
+  objectCode: number;
+  geometryType: number;
+  descriptorLength: number;
+  geometry: Cm93GeometryReference;
+  relatedObjectIndexes: number[];
+  attributeCount: number;
+  rawAttributes: Uint8Array;
+};
+
+export type Cm93ParsedCell = {
+  header: Cm93CellHeader;
+  metadata: Cm93CellMetadata;
+  vectors: Cm93VectorRecord[];
+  points3d: Cm93Point3dRecord[];
+  points2d: Array<[number, number]>;
+  features: Cm93FeatureRecord[];
+};
+
+function checkedCount(value: number, label: string, maximum = 2_000_000): number {
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
+    throw new Cm93DecodeError(`Invalid CM93 ${label} count: ${value}.`);
+  }
+  return value;
+}
+
+/**
+ * Parse the independently verified cell header, geometry tables and feature
+ * record framing. Feature attributes remain raw bytes at this stage; typed
+ * attribute decoding and map portrayal are deliberately separate steps.
+ */
+export function parseCm93Cell(bytes: Uint8Array, filename: string): Cm93ParsedCell {
+  const header = decodeCm93CellHeader(bytes.subarray(0, 10), bytes.byteLength, filename);
+  if (header.headerLength < 138) {
+    throw new Cm93DecodeError(`CM93 header in ${filename} is shorter than the 128-byte cell metadata block.`);
+  }
+
+  const decoded = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) decoded[i] = CM93_DECODE_MAP[bytes[i]];
+  header.decodedHeader = decoded.slice(0, header.headerLength);
+
+  const headerReader = new Cm93BinaryReader(decoded, 10);
+  const lonMin = headerReader.readFloat64LE();
+  const latMin = headerReader.readFloat64LE();
+  const lonMax = headerReader.readFloat64LE();
+  const latMax = headerReader.readFloat64LE();
+  const eastingMin = headerReader.readFloat64LE();
+  const northingMin = headerReader.readFloat64LE();
+  const eastingMax = headerReader.readFloat64LE();
+  const northingMax = headerReader.readFloat64LE();
+
+  const vectorRecordCount = checkedCount(headerReader.readUint16LE(), 'vector record');
+  const vectorPointCount = checkedCount(headerReader.readInt32LE(), 'vector point');
+  headerReader.readInt32LE(); // Reserved/auxiliary descriptor count.
+  headerReader.readInt32LE(); // Reserved/auxiliary descriptor count.
+  const point3dRecordCount = checkedCount(headerReader.readUint16LE(), '3D point record');
+  const point3dPointCount = checkedCount(headerReader.readInt32LE(), '3D point');
+  headerReader.readInt32LE(); // Reserved/auxiliary 3D count.
+  const point2dCount = checkedCount(headerReader.readUint16LE(), '2D point');
+  headerReader.readUint16LE(); // Auxiliary point count.
+  headerReader.readUint16LE(); // Auxiliary point count.
+  const featureCount = checkedCount(headerReader.readUint16LE(), 'feature record', 100_000);
+  headerReader.readInt32LE(); // Auxiliary count.
+  headerReader.readInt32LE(); // Auxiliary count.
+  headerReader.readUint16LE(); // Auxiliary count.
+  headerReader.readUint16LE(); // Auxiliary count.
+  headerReader.readUint16LE(); // Auxiliary count.
+  const relatedObjectPointerCount = checkedCount(headerReader.readInt32LE(), 'related-object pointer');
+  headerReader.readInt32LE(); // Auxiliary count.
+  headerReader.readUint16LE(); // Auxiliary count.
+  const attributeByteCount = checkedCount(headerReader.readInt32LE(), 'attribute byte');
+  headerReader.readInt32LE(); // Auxiliary count.
+
+  const geographicValues = [lonMin, latMin, lonMax, latMax];
+  const projectedValues = [eastingMin, northingMin, eastingMax, northingMax];
+  if (!geographicValues.every(Number.isFinite) ||
+      Math.abs(lonMin) > 180 || Math.abs(lonMax) > 180 ||
+      Math.abs(latMin) > 90 || Math.abs(latMax) > 90 ||
+      !projectedValues.every(Number.isFinite) ||
+      lonMin > lonMax || latMin > latMax) {
+    throw new Cm93DecodeError(`Invalid coordinate bounds in CM93 cell ${filename}.`);
+  }
+
+  const metadata: Cm93CellMetadata = {
+    geographicBounds: { west: lonMin, south: latMin, east: lonMax, north: latMax },
+    projectedBounds: { west: eastingMin, south: northingMin, east: eastingMax, north: northingMax },
+    vectorRecordCount,
+    vectorPointCount,
+    point3dRecordCount,
+    point3dPointCount,
+    point2dCount,
+    featureCount,
+    relatedObjectPointerCount,
+    attributeByteCount,
+  };
+
+  const tableReader = new Cm93BinaryReader(decoded, header.headerLength);
+  const vectors: Cm93VectorRecord[] = [];
+  let actualVectorPoints = 0;
+  for (let record = 0; record < vectorRecordCount; record++) {
+    const pointCount = checkedCount(tableReader.readUint16LE(), 'points in vector record', 65_535);
+    actualVectorPoints += pointCount;
+    if (actualVectorPoints > vectorPointCount) {
+      throw new Cm93DecodeError(`Vector point count exceeds the CM93 header total in ${filename}.`);
+    }
+    const points: Array<[number, number]> = [];
+    for (let point = 0; point < pointCount; point++) {
+      points.push([tableReader.readUint16LE(), tableReader.readUint16LE()]);
+    }
+    vectors.push({ points });
+  }
+  if (actualVectorPoints !== vectorPointCount) {
+    throw new Cm93DecodeError(`Vector point count mismatch in CM93 cell ${filename}.`);
+  }
+
+  const points3d: Cm93Point3dRecord[] = [];
+  let actual3dPoints = 0;
+  for (let record = 0; record < point3dRecordCount; record++) {
+    const pointCount = checkedCount(tableReader.readUint16LE(), 'points in 3D record', 65_535);
+    actual3dPoints += pointCount;
+    if (actual3dPoints > point3dPointCount) {
+      throw new Cm93DecodeError(`3D point count exceeds the CM93 header total in ${filename}.`);
+    }
+    const points: Array<[number, number, number]> = [];
+    for (let point = 0; point < pointCount; point++) {
+      points.push([tableReader.readUint16LE(), tableReader.readUint16LE(), tableReader.readUint16LE()]);
+    }
+    points3d.push({ points });
+  }
+  if (actual3dPoints !== point3dPointCount) {
+    throw new Cm93DecodeError(`3D point count mismatch in CM93 cell ${filename}.`);
+  }
+
+  const points2d: Array<[number, number]> = [];
+  for (let point = 0; point < point2dCount; point++) {
+    points2d.push([tableReader.readUint16LE(), tableReader.readUint16LE()]);
+  }
+  if (tableReader.offset !== header.table2Offset) {
+    throw new Cm93DecodeError(
+      `CM93 geometry table boundary mismatch in ${filename}: parsed to byte ${tableReader.offset}, expected ${header.table2Offset}.`,
+    );
+  }
+
+  const featureReader = new Cm93BinaryReader(decoded, header.table2Offset);
+  const table2End = header.table2Offset + header.table2Length;
+  const features: Cm93FeatureRecord[] = [];
+  let actualAttributeBytes = 0;
+  for (let record = 0; record < featureCount; record++) {
+    const recordStart = featureReader.offset;
+    const objectCode = featureReader.readUint8();
+    const geometryType = featureReader.readUint8();
+    const descriptorLength = featureReader.readUint16LE();
+    const recordEnd = recordStart + descriptorLength;
+    if (descriptorLength < 4 || recordEnd > table2End) {
+      throw new Cm93DecodeError(`Invalid feature descriptor length in ${filename} at byte ${recordStart}.`);
+    }
+
+    let geometry: Cm93GeometryReference = { kind: 'unknown' };
+    const primitive = geometryType & 0x0f;
+    if (primitive === 2 || primitive === 4) {
+      const elementCount = checkedCount(featureReader.readUint16LE(), 'geometry element', 65_535);
+      const vectorsForFeature: Array<{ index: number; segmentUsage: number }> = [];
+      for (let element = 0; element < elementCount; element++) {
+        const encodedIndex = featureReader.readUint16LE();
+        const index = encodedIndex & 0x1fff;
+        if (index >= vectors.length) {
+          throw new Cm93DecodeError(`CM93 feature references missing vector ${index} in ${filename}.`);
+        }
+        vectorsForFeature.push({ index, segmentUsage: encodedIndex >>> 13 });
+      }
+      geometry = { kind: primitive === 4 ? 'area' : 'line', vectors: vectorsForFeature };
+    } else if (primitive === 1) {
+      const index = featureReader.readUint16LE();
+      if (index >= points2d.length) throw new Cm93DecodeError(`CM93 feature references missing 2D point ${index} in ${filename}.`);
+      geometry = { kind: 'point', index };
+    } else if (primitive === 8) {
+      const index = featureReader.readUint16LE();
+      if (index >= points3d.length) throw new Cm93DecodeError(`CM93 feature references missing 3D point ${index} in ${filename}.`);
+      geometry = { kind: 'point3d', index };
+    }
+
+    const relatedObjectIndexes: number[] = [];
+    if ((geometryType & 0x10) !== 0) {
+      const relatedCount = featureReader.readUint8();
+      for (let related = 0; related < relatedCount; related++) {
+        const index = featureReader.readUint16LE();
+        if (index >= featureCount) throw new Cm93DecodeError(`CM93 feature references missing related object ${index} in ${filename}.`);
+        relatedObjectIndexes.push(index);
+      }
+    }
+    if ((geometryType & 0x20) !== 0) featureReader.readUint16LE();
+
+    let attributeCount = 0;
+    let rawAttributes = new Uint8Array();
+    if ((geometryType & 0x80) !== 0) {
+      attributeCount = featureReader.readUint8();
+      const attributeLength = recordEnd - featureReader.offset;
+      if (attributeLength < 0) throw new Cm93DecodeError(`CM93 feature fields exceed descriptor length in ${filename}.`);
+      rawAttributes = featureReader.readBytes(attributeLength);
+      actualAttributeBytes += attributeLength;
+    }
+    if (featureReader.offset > recordEnd) {
+      throw new Cm93DecodeError(`CM93 feature fields exceed descriptor length in ${filename}.`);
+    }
+    featureReader.seek(recordEnd);
+    features.push({ objectCode, geometryType, descriptorLength, geometry, relatedObjectIndexes, attributeCount, rawAttributes });
+  }
+
+  if (featureReader.offset !== table2End) {
+    throw new Cm93DecodeError(
+      `CM93 feature table boundary mismatch in ${filename}: parsed to byte ${featureReader.offset}, expected ${table2End}.`,
+    );
+  }
+  if (actualAttributeBytes > attributeByteCount) {
+    throw new Cm93DecodeError(`Feature attributes exceed the CM93 header total in ${filename}.`);
+  }
+
+  return { header, metadata, vectors, points3d, points2d, features };
+}
