@@ -119,12 +119,11 @@ test('returns an empty current quilt instead of resurrecting stale prior-render 
   assert.deepEqual(mergeCm93QuiltFeatures([], [previous], new Set()), []);
 });
 
-test('retains legacy fallback keys when their cell footprint cannot be parsed', () => {
+test('does not retain unrecognized prior-render features', () => {
   const legacy = {
     type: 'Feature',
     properties: { cm93Class: 'DEPARE', cm93SourceCell: 'coarse-cell.c' },
     geometry: { type: 'Polygon', coordinates: [] },
   };
-  const merged = mergeCm93QuiltFeatures([], [legacy], new Set(['fine-cell.g']));
-  assert.deepEqual(merged, [legacy]);
+  assert.deepEqual(mergeCm93QuiltFeatures([], [legacy], new Set(['fine-cell.g'])), []);
 });
