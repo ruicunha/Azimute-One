@@ -8,6 +8,14 @@ import { planChartQuilt } from './chart-quilt';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
+type RasterChartMetadata = {
+  name: string;
+  bounds: [number, number, number, number];
+  minzoom: number;
+  maxzoom: number;
+  tileCount?: number;
+};
+
 const emptyStyle: maplibregl.StyleSpecification = {
   version: 8,
   sources: {},
@@ -38,6 +46,8 @@ export default function App() {
   const [featureCount, setFeatureCount] = useState<number | null>(null);
   const [source, setSource] = useState('Natural Earth overview');
   const [selectedCharts, setSelectedCharts] = useState<string[]>([]);
+  const [cmapMetadata, setCmapMetadata] = useState<RasterChartMetadata | null>(null);
+  const [cmapVisible, setCmapVisible] = useState(false);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -57,6 +67,35 @@ export default function App() {
       });
       map.addLayer({ id: 'world-land-fill', type: 'fill', source: 'world-land', paint: { 'fill-color': '#d9d6c8' } });
       map.addLayer({ id: 'world-land-outline', type: 'line', source: 'world-land', paint: { 'line-color': '#9caa9d', 'line-width': 0.7 } });
+      // An optional MBTiles dataset is converted to static XYZ tiles during the
+      // Pages build. If it is not configured, the vector-only prototype is unchanged.
+      void fetch(`${import.meta.env.BASE_URL}cmap-tiles/metadata.json`)
+        .then((response) => {
+          if (!response.ok) throw new Error('No raster chart is configured.');
+          return response.json() as Promise<RasterChartMetadata>;
+        })
+        .then((metadata) => {
+          if (mapRef.current !== map) return;
+          map.addSource('cmap-raster', {
+            type: 'raster',
+            tiles: [`${import.meta.env.BASE_URL}cmap-tiles/{z}/{x}/{y}.png`],
+            tileSize: 256,
+            minzoom: metadata.minzoom,
+            maxzoom: metadata.maxzoom,
+            bounds: metadata.bounds,
+          });
+          map.addLayer({
+            id: 'cmap-raster-layer',
+            type: 'raster',
+            source: 'cmap-raster',
+            layout: { visibility: 'none' },
+            paint: { 'raster-opacity': 0.96 },
+          });
+          setCmapMetadata(metadata);
+        })
+        .catch(() => {
+          // Raster charts are optional; missing metadata should not affect ENC use.
+        });
     });
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'nautical' as never }), 'bottom-left');
@@ -200,6 +239,24 @@ export default function App() {
     }
   };
 
+  const toggleCmapRaster = () => {
+    const map = mapRef.current;
+    if (!map || !cmapMetadata || !map.getLayer('cmap-raster-layer')) return;
+    const nextVisible = !cmapVisible;
+    map.setLayoutProperty('cmap-raster-layer', 'visibility', nextVisible ? 'visible' : 'none');
+    setCmapVisible(nextVisible);
+    if (nextVisible) {
+      const [west, south, east, north] = cmapMetadata.bounds;
+      map.fitBounds([[west, south], [east, north]], { padding: 36, maxZoom: 9, duration: 700 });
+      setChartName(cmapMetadata.name || 'Portugal raster chart');
+      setSource('MBTiles raster chart');
+      setMessage('Raster chart tiles loaded from the optional MBTiles dataset.');
+      setStatus('ready');
+    } else {
+      setMessage('Raster chart hidden. Vector ENC selection remains active.');
+    }
+  };
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -226,6 +283,7 @@ export default function App() {
             {selectedCharts.length ? <ul>{selectedCharts.map((title) => <li key={title}>{title}</li>)}</ul> : <p>No chart currently matches this viewport.</p>}
           </div>
           <label className="file-button"><span>Load ENC file</span><input type="file" accept=".000,.zip,application/zip,application/octet-stream" onChange={(event) => void onFile(event.target.files?.[0])} /></label>
+          {cmapMetadata && <button className="secondary-button" type="button" onClick={toggleCmapRaster}>{cmapVisible ? 'Hide Portugal raster chart' : 'Show Portugal raster chart'}</button>}
           <div className="legend">
             <span className="field-label">WHAT TO INSPECT</span>
             <ul><li>Pan between chart coverage areas</li><li>Zoom through different scale ranges</li><li>Observe the reference chart and fallback coverage cells</li><li>Check that off-screen chart layers are unloaded</li></ul>
