@@ -747,6 +747,8 @@ export default function App() {
     const features: ReturnType<typeof cm93CellToGeoJSON>['geojson']['features'] = [];
     let failed = 0;
     let decoded = 0;
+    let emptyCells = 0;
+    const failedCellNames: string[] = [];
 
     for (let index = 0; index < selection.files.length; index++) {
       if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
@@ -770,10 +772,12 @@ export default function App() {
           }
         } catch {
           failed++;
+          failedCellNames.push(file.name);
           continue;
         }
       }
       if (!cellFeatures) continue;
+      if (cellFeatures.length === 0) emptyCells++;
       // Tag each feature with its source cell. When a finer cell has no usable
       // information, this lets the next quilt retain older-scale features from
       // cells that are not covered by the new selection instead of blanking them.
@@ -860,10 +864,13 @@ export default function App() {
       classes: classSummary,
     });
     setStatus('ready');
+    const retainedFallbackCount = quiltFeatures.length - features.length;
     setMessage('Automatic CM93 detail: ' + selection.files.length + ' ' + selection.scale +
-      '-scale cells, ' + features.length.toLocaleString() + ' features (' + decoded +
-      ' newly decoded, ' + (selection.files.length - decoded - failed) + ' from cache).' +
-      (failed ? ' ' + failed + ' cells failed to decode.' : ''));
+      '-scale cells, ' + features.length.toLocaleString() + ' current features (' + decoded +
+      ' newly decoded, ' + (selection.files.length - decoded - failed) + ' from cache); ' +
+      retainedFallbackCount.toLocaleString() + ' previous-scale fallback features retained; ' +
+      emptyCells + ' empty cells.' +
+      (failed ? ' ' + failed + ' cells failed to decode: ' + failedCellNames.slice(0, 5).join(', ') + (failedCellNames.length > 5 ? ', …' : '') + '.' : ''));
   }, []);
 
   useEffect(() => {
