@@ -6,7 +6,7 @@ import { unzipSync } from 'fflate';
 import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-catalog';
 import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
-import { parseCm93Cell, parseCm93Dictionaries } from './cm93-decoder';
+import { decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -53,7 +53,7 @@ export default function App() {
   const [cmapVisible, setCmapVisible] = useState(false);
   const [cm93Summary, setCm93Summary] = useState<Cm93DatasetSummary | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
-  const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
+  const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; classes: string[]; attributes: string[]; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -264,9 +264,10 @@ export default function App() {
         findTextFile('CM93OBJ.DIC'),
         findTextFile('CM93ATTR.DIC'),
       ]);
+      let dictionary: Cm93Dictionary | null = null;
       let dictionaryStats: { objects: number; attributes: number } | null = null;
       if (objectDictionary !== null && attributeDictionary !== null) {
-        const dictionary = parseCm93Dictionaries(objectDictionary, attributeDictionary);
+        dictionary = parseCm93Dictionaries(objectDictionary, attributeDictionary);
         dictionaryStats = { objects: dictionary.objectsByCode.size, attributes: dictionary.attributesByCode.size };
       }
       const cellFiles = fileList.filter((file) => /\.[A-GZ]$/i.test(file.name))
@@ -277,6 +278,8 @@ export default function App() {
       let features = 0;
       let vectors = 0;
       let vectorPoints = 0;
+      const classCounts = new Map<string, number>();
+      const attributeCounts = new Map<string, number>();
       let example: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } | undefined;
       for (const file of sample) {
         try {
@@ -285,6 +288,19 @@ export default function App() {
           features += cell.features.length;
           vectors += cell.vectors.length;
           vectorPoints += cell.metadata.vectorPointCount;
+          for (const feature of cell.features) {
+            const objectName = dictionary?.objectsByCode.get(feature.objectCode)?.name ?? 'Object ' + feature.objectCode;
+            classCounts.set(objectName, (classCounts.get(objectName) ?? 0) + 1);
+            if (dictionary && feature.attributeCount > 0) {
+              try {
+                for (const attribute of decodeCm93FeatureAttributes(feature.rawAttributes, feature.attributeCount, dictionary)) {
+                  if (attribute.supported && attribute.name) attributeCounts.set(attribute.name, (attributeCounts.get(attribute.name) ?? 0) + 1);
+                }
+              } catch {
+                // Keep the geometry sample usable if an uncommon attribute encoding is not yet supported.
+              }
+            }
+          }
           if (!example) example = {
             name: file.webkitRelativePath || file.name,
             headerLength: cell.header.headerLength,
@@ -300,7 +316,9 @@ export default function App() {
           failures.push((file.webkitRelativePath || file.name) + ': ' + (error instanceof Error ? error.message : 'header validation failed'));
         }
       }
-      const cellStats = { checked: sample.length, valid, features, vectors, vectorPoints, failures, example };
+      const classes = [...classCounts.entries()].sort((left, right) => right[1] - left[1]).slice(0, 8).map(([name, count]) => name + ' (' + count + ')');
+      const attributes = [...attributeCounts.entries()].sort((left, right) => right[1] - left[1]).slice(0, 8).map(([name, count]) => name + ' (' + count + ')');
+      const cellStats = { checked: sample.length, valid, features, vectors, vectorPoints, classes, attributes, failures, example };
       setCm93CellStats(cellStats);
       setCm93DictionaryStats(dictionaryStats);
       setCm93Summary(summary);
@@ -381,6 +399,8 @@ export default function App() {
             {cm93CellStats && <ul>
               <li>Cell record parsing: {cm93CellStats.valid}/{cm93CellStats.checked} passed</li>
               <li>Sample totals: {cm93CellStats.features.toLocaleString()} feature records · {cm93CellStats.vectors.toLocaleString()} vector records · {cm93CellStats.vectorPoints.toLocaleString()} vector points</li>
+              {cm93CellStats.classes.length > 0 && <li>Object classes: {cm93CellStats.classes.join(', ')}</li>}
+              {cm93CellStats.attributes.length > 0 && <li>Decoded attributes: {cm93CellStats.attributes.join(', ')}</li>}
               {cm93CellStats.example && <li>Example {cm93CellStats.example.name}: bounds [{cm93CellStats.example.bounds}], {cm93CellStats.example.featureCount} features, {cm93CellStats.example.vectorRecordCount} vectors / {cm93CellStats.example.vectorPointCount} points, {cm93CellStats.example.point2dCount} 2D points; header {cm93CellStats.example.headerLength} bytes, tables {cm93CellStats.example.table1Length.toLocaleString()} + {cm93CellStats.example.table2Length.toLocaleString()} bytes</li>}
               {cm93CellStats.failures.map((failure) => <li key={failure}>{failure}</li>)}
             </ul>}
