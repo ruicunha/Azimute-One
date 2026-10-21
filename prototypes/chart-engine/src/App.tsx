@@ -454,7 +454,12 @@ export default function App() {
       map.addLayer({
         id: 'cm93-cell-points', type: 'circle', source: 'cm93-active-cell',
         filter: ['==', ['geometry-type'], 'Point'],
-        paint: { 'circle-radius': 4, 'circle-color': '#d94b36', 'circle-stroke-color': '#fff7df', 'circle-stroke-width': 1 },
+        paint: {  'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 1, 8, 2, 13, 3],
+          'circle-color': ['match', ['get', 'cm93Class'],
+            'BCNLAT', '#d94b36', 'BCNCAR', '#d94b36', 'BCNSAW', '#d94b36',
+            'BOYLAT', '#d94b36', 'BOYCAR', '#d94b36', 'BOYSAW', '#d94b36',
+            'LIGHTS', '#e6b94a', 'LNDMRK', '#8c5a36', '#59666b'],
+          'circle-stroke-color': '#f6f1df', 'circle-stroke-width': 0.5 },
       });
       map.addLayer({
         id: 'cm93-cell-labels', type: 'symbol', source: 'cm93-active-cell',
@@ -695,11 +700,22 @@ export default function App() {
       map.addSource('cm93-quilt', { type: 'geojson', data, tolerance: 0.5, maxzoom: 14, buffer: 0 });
       map.addLayer({
         id: 'cm93-quilt-fill', type: 'fill', source: 'cm93-quilt',
-        paint: { 'fill-color': '#e8c96b', 'fill-opacity': 0.34 },
+        paint: {
+          'fill-color': ['match', ['get', 'cm93Class'],
+            'DEPARE', '#d5e8ec', 'DRGARE', '#d5e8ec', 'LNDARE', '#d9d6c8',
+            'UNSARE', '#d5e8ec', '#e5e0cb'],
+          'fill-opacity': 0.52,
+        },
       });
       map.addLayer({
         id: 'cm93-quilt-lines', type: 'line', source: 'cm93-quilt',
-        paint: { 'line-color': '#554b31', 'line-width': 1.15 },
+        paint: {
+          'line-color': ['match', ['get', 'cm93Class'],
+            'DEPCNT', '#4e91b5', 'COALNE', '#5d6558', 'SLCONS', '#5d6558',
+            'CANAL', '#4e91b5', 'RIVERS', '#4e91b5', 'ROADWY', '#b78a64',
+            '#817d6d'],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 2, 0.35, 8, 0.8, 13, 1.35],
+        },
       });
       map.addLayer({
         id: 'cm93-quilt-points', type: 'circle', source: 'cm93-quilt',
