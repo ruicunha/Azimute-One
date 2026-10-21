@@ -137,7 +137,7 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
   });
   map.addLayer({
     id: prefix + '-icons', type: 'symbol', source, minzoom: 3,
-    filter: ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    filter: ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
     layout: {
       'text-field': ['match', ['get', 'cm93Class'],
         'LIGHTS', '✦',
@@ -158,15 +158,15 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
   });
   map.addLayer({
     id: prefix + '-labels', type: 'symbol', source, minzoom: 12,
-    filter: ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    filter: ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
     layout: {
-      'text-field': ['case',
+      'text-field': ['coalesce', ['get', 'cm93DetailLabel'], ['case',
         ['==', ['get', 'cm93Class'], 'LIGHTS'],
         ['concat', ['coalesce', ['to-string', ['get', 'OBJNAM']], 'Light'], ' ', ['coalesce', ['to-string', ['get', 'SIGPER']], ''], 's'],
         ['has', 'OBJNAM'], ['to-string', ['get', 'OBJNAM']],
         ['has', 'VALNMR'], ['concat', ['to-string', ['get', 'VALNMR']], ' m'],
         ['has', 'COLOUR'], ['to-string', ['get', 'COLOUR']],
-        ''],
+        '']],
       'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
       'text-size': ['interpolate', ['linear'], ['zoom'], 12, 9, 16, 12],
       'text-offset': [0, 1.1], 'text-anchor': 'top',
@@ -761,6 +761,14 @@ export default function App() {
     }
 
     if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
+    // Never replace a valid quilt with a blank result while transitioning to a
+    // scale whose selected cells contain no usable features. Keep the last good
+    // portrayal until a useful quilt can be built.
+    if (features.length === 0) {
+      setStatus('ready');
+      setMessage('No usable features at target scale ' + selection.scale + '. Keeping the previous chart coverage until useful detail is available.');
+      return;
+    }
     const data = { type: 'FeatureCollection', features } as never;
     const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
     if (existingSource?.setData) {
@@ -854,10 +862,10 @@ export default function App() {
     visibleCm93PointClassesRef.current = next; setVisibleCm93PointClasses(next);
     const map = mapRef.current; if (!map) return;
     for (const layerId of ['cm93-cell-icons', 'cm93-quilt-icons']) {
-      if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+      if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', next]]]);
     }
     for (const layerId of ['cm93-cell-labels', 'cm93-quilt-labels']) {
-      if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+      if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', next]]]);
     }
   };
 
