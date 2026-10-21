@@ -766,6 +766,18 @@ export function cm93RingsToPolygonCoordinates(
   return polygons;
 }
 
+/**
+ * Choose the semantic primary when CM93 links multiple records for one aid.
+ * A light's identity and light characteristics must remain primary over a
+ * related buoy/beacon record; otherwise the buoy name can replace the light.
+ */
+export function cm93RelatedObjectPriority(featureClass: string): number {
+  if (featureClass === 'LIGHTS') return 5;
+  if (featureClass.startsWith('BCN')) return 4;
+  if (featureClass.startsWith('BOY')) return 3;
+  return 1;
+}
+
 export type Cm93GeoJsonResult = {
   geojson: GeoJSON.FeatureCollection;
   omittedGeometryCount: number;
@@ -881,13 +893,8 @@ export function cm93CellToGeoJSON(cell: Cm93ParsedCell, dictionary: Cm93Dictiona
     group.push(feature);
     groups.set(root, group);
   }
-  const classPriority = (feature: GeoJSON.Feature): number => {
-    const name = String(feature.properties?.cm93Class ?? '');
-    if (name.startsWith('BOY')) return 4;
-    if (name.startsWith('BCN')) return 3;
-    if (name === 'LIGHTS') return 2;
-    return 1;
-  };
+  const classPriority = (feature: GeoJSON.Feature): number =>
+    cm93RelatedObjectPriority(String(feature.properties?.cm93Class ?? ''));
   const detailAttributes = ['SIGPER', 'SIGGRP', 'HEIGHT', 'VALNMR', 'COLOUR', 'CATLIT'];
   for (const group of groups.values()) {
     if (group.length < 2) continue;
