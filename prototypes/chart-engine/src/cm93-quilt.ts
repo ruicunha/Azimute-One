@@ -135,3 +135,21 @@ export function selectCm93ViewportCells(
   for (const item of result) scaleCounts[item.scale] = (scaleCounts[item.scale] ?? 0) + 1;
   return { scale: targetScale, files: result.map((item) => item.file), scaleCounts };
 }
+
+
+/**
+ * Keep previous-scale features for cells not represented by the current
+ * selection. A selected cell replaces its prior version; an unselected cell
+ * remains as a fallback when a finer scale has no usable information.
+ */
+export function mergeCm93QuiltFeatures(
+  currentFeatures: GeoJSON.Feature[],
+  previousFeatures: GeoJSON.Feature[],
+  selectedCellKeys: Set<string>,
+): GeoJSON.Feature[] {
+  const fallback = previousFeatures.filter((feature) => {
+    const sourceCell = feature.properties?.cm93SourceCell;
+    return typeof sourceCell === 'string' && !selectedCellKeys.has(sourceCell);
+  });
+  return [...currentFeatures, ...fallback];
+}
