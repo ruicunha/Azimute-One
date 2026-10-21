@@ -136,20 +136,53 @@ export function selectCm93ViewportCells(
   return { scale: targetScale, files: result.map((item) => item.file), scaleCounts };
 }
 
+type Cm93CellFootprint = { south: number; north: number; west: number; east: number };
+
+function cm93CellFootprint(sourceCell: string): Cm93CellFootprint | null {
+  const match = sourceCell.toLowerCase().match(/(\d{4})(\d{4})\.([zabcdefg])$/);
+  if (!match) return null;
+  const latitudeCell = Number(match[1]) - 30;
+  const longitudeCell = Number(match[2]);
+  const scale = match[3].toUpperCase() as Cm93ScaleCode;
+  const step = CM93_SCALE_STEPS[scale];
+  return {
+    south: latitudeCell,
+    north: latitudeCell + step,
+    west: longitudeCell,
+    east: longitudeCell + step,
+  };
+}
+
+function cellFootprintsOverlap(a: Cm93CellFootprint, b: Cm93CellFootprint): boolean {
+  if (a.south >= b.north || b.south >= a.north) return false;
+
+  // CM93 longitude cell codes wrap at 1080 (360 degrees × 3 units/degree).
+  // Compare shifted copies so cells near 0/360 degrees are handled consistently.
+  return [-1080, 0, 1080].some((shift) =>
+    a.west < b.east + shift && b.west + shift < a.east);
+}
 
 /**
- * Keep previous-scale features for cells not represented by the current
- * selection. A selected cell replaces its prior version; an unselected cell
- * remains as a fallback when a finer scale has no usable information.
+ * Merge the current viewport's chosen cells with previous-scale fallback data.
+ * Any previous cell whose geographic footprint overlaps a currently selected
+ * cell is discarded, even when the source paths differ by scale. This avoids
+ * drawing coarse geometry underneath the finer cell's replacement coverage.
  */
 export function mergeCm93QuiltFeatures(
   currentFeatures: GeoJSON.Feature[],
   previousFeatures: GeoJSON.Feature[],
   selectedCellKeys: Set<string>,
 ): GeoJSON.Feature[] {
+  const selectedFootprints = [...selectedCellKeys]
+    .map(cm93CellFootprint)
+    .filter((footprint): footprint is Cm93CellFootprint => footprint !== null);
   const fallback = previousFeatures.filter((feature) => {
     const sourceCell = feature.properties?.cm93SourceCell;
-    return typeof sourceCell === 'string' && !selectedCellKeys.has(sourceCell);
+    if (typeof sourceCell !== 'string' || selectedCellKeys.has(sourceCell)) return false;
+    const previousFootprint = cm93CellFootprint(sourceCell);
+    // Preserve legacy/unrecognized keys only when we cannot determine overlap.
+    return !previousFootprint || !selectedFootprints.some((selected) =>
+      cellFootprintsOverlap(previousFootprint, selected));
   });
   return [...currentFeatures, ...fallback];
 }

@@ -69,7 +69,6 @@ test('limits the number of selected cells for large viewports', () => {
   assert.equal(result.files.length, 0);
 });
 
-
 test('does not truncate a detailed viewport at the old 180-cell limit', () => {
   const files = [];
   for (let latitudeCell = 240; latitudeCell <= 258; latitudeCell++) {
@@ -90,24 +89,37 @@ test('does not truncate a detailed viewport at the old 180-cell limit', () => {
   assert.equal(result.scaleCounts.G, 361);
 });
 
-
-test('retains previous-scale features for cells missing from the current quilt', () => {
-  const previousFine = {
+test('removes previous coarse data where current fine cells overlap but keeps adjacent fallback cells', () => {
+  const previousOverlapping = {
     type: 'Feature',
-    properties: { cm93Class: 'BOYLAT', cm93SourceCell: 'fine-cell.g' },
-    geometry: { type: 'Point', coordinates: [-9, 38] },
+    properties: { cm93Class: 'DEPARE', cm93SourceCell: 'cm93/02100000/c/02460000.c' },
+    geometry: { type: 'Polygon', coordinates: [] },
   };
-  const previousCoarse = {
+  const previousAdjacent = {
     type: 'Feature',
-    properties: { cm93Class: 'DEPARE', cm93SourceCell: 'coarse-cell.c' },
-    geometry: { type: 'Polygon', coordinates: [[[-9, 38], [-8, 38], [-8, 39], [-9, 38]]] },
+    properties: { cm93Class: 'DEPARE', cm93SourceCell: 'cm93/02100012/c/02460012.c' },
+    geometry: { type: 'Polygon', coordinates: [] },
   };
   const current = {
     type: 'Feature',
-    properties: { cm93Class: 'BOYLAT', cm93SourceCell: 'fine-cell.g' },
+    properties: { cm93Class: 'BOYLAT', cm93SourceCell: 'cm93/02100000/g/02460000.g' },
     geometry: { type: 'Point', coordinates: [-9, 38] },
   };
 
-  const merged = mergeCm93QuiltFeatures([current], [previousFine, previousCoarse], new Set(['fine-cell.g']));
-  assert.deepEqual(merged, [current, previousCoarse]);
+  const merged = mergeCm93QuiltFeatures(
+    [current],
+    [previousOverlapping, previousAdjacent],
+    new Set(['cm93/02100000/g/02460000.g']),
+  );
+  assert.deepEqual(merged, [current, previousAdjacent]);
+});
+
+test('retains legacy fallback keys when their cell footprint cannot be parsed', () => {
+  const legacy = {
+    type: 'Feature',
+    properties: { cm93Class: 'DEPARE', cm93SourceCell: 'coarse-cell.c' },
+    geometry: { type: 'Polygon', coordinates: [] },
+  };
+  const merged = mergeCm93QuiltFeatures([], [legacy], new Set(['fine-cell.g']));
+  assert.deepEqual(merged, [legacy]);
 });
