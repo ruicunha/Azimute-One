@@ -135,7 +135,7 @@ export function selectCm93ViewportCells(
 type Cm93CellFootprint = { south: number; north: number; west: number; east: number };
 
 function cm93CellFootprint(sourceCell: string): Cm93CellFootprint | null {
-  const match = sourceCell.toLowerCase().match(/(\\d{4})(\\d{4})\\.([zabcdefg])$/);
+  const match = sourceCell.toLowerCase().match(/(\d{4})(\d{4})\.([zabcdefg])$/);
   if (!match) return null;
   const latitudeCell = Number(match[1]) - 30;
   const longitudeCell = Number(match[2]);
