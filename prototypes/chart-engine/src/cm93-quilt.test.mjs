@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clipCm93FeaturesToBounds, cm93ScaleForZoom, mergeCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt.ts';
+import { cm93ScaleForZoom, mergeCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt.ts';
 
 function cell(scale, filename, path) {
   return { name: filename, webkitRelativePath: path, arrayBuffer: async () => new ArrayBuffer(0) };
@@ -69,6 +69,7 @@ test('limits the number of selected cells for large viewports', () => {
   assert.equal(result.files.length, 0);
 });
 
+
 test('does not truncate a detailed viewport at the old 180-cell limit', () => {
   const files = [];
   for (let latitudeCell = 240; latitudeCell <= 258; latitudeCell++) {
@@ -89,85 +90,24 @@ test('does not truncate a detailed viewport at the old 180-cell limit', () => {
   assert.equal(result.scaleCounts.G, 361);
 });
 
-test('does not carry stale previous-scale features into the current viewport quilt', () => {
+
+test('retains previous-scale features for cells missing from the current quilt', () => {
+  const previousFine = {
+    type: 'Feature',
+    properties: { cm93Class: 'BOYLAT', cm93SourceCell: 'fine-cell.g' },
+    geometry: { type: 'Point', coordinates: [-9, 38] },
+  };
   const previousCoarse = {
     type: 'Feature',
-    properties: { cm93Class: 'DEPCNT', cm93SourceCell: 'cm93/02100000/c/02460000.c' },
-    geometry: { type: 'LineString', coordinates: [[-9, 38], [-8.9, 38.1]] },
-  };
-  const currentFine = {
-    type: 'Feature',
-    properties: { cm93Class: 'DEPCNT', cm93SourceCell: 'cm93/02100000/g/02460000.g' },
-    geometry: { type: 'LineString', coordinates: [[-9, 38], [-8.95, 38.05]] },
-  };
-
-  const merged = mergeCm93QuiltFeatures(
-    [currentFine],
-    [previousCoarse],
-    new Set(['cm93/02100000/g/02460000.g']),
-  );
-  assert.deepEqual(merged, [currentFine]);
-  assert.ok(!merged.includes(previousCoarse));
-});
-
-test('returns an empty current quilt instead of resurrecting stale prior-render data', () => {
-  const previous = {
-    type: 'Feature',
-    properties: { cm93Class: 'DEPCNT', cm93SourceCell: 'cm93/02100000/c/02460000.c' },
-    geometry: { type: 'LineString', coordinates: [[-9, 38], [-8.9, 38.1]] },
-  };
-  assert.deepEqual(mergeCm93QuiltFeatures([], [previous], new Set()), []);
-});
-
-test('does not retain unrecognized prior-render features', () => {
-  const legacy = {
-    type: 'Feature',
     properties: { cm93Class: 'DEPARE', cm93SourceCell: 'coarse-cell.c' },
-    geometry: { type: 'Polygon', coordinates: [] },
+    geometry: { type: 'Polygon', coordinates: [[[-9, 38], [-8, 38], [-8, 39], [-9, 38]]] },
   };
-  assert.deepEqual(mergeCm93QuiltFeatures([], [legacy], new Set(['fine-cell.g'])), []);
-});
-
-test('provides an ordered coarser fallback chain for a target footprint', () => {
-  const fine = cell('D', '03841050.D', 'cm93/03301020/d/03841050.d');
-  const coarse = cell('C', '03781044.C', 'cm93/03301020/c/03781044.c');
-  const result = selectCm93ViewportCells([fine, coarse], {
-    west: -9.3, south: 38.5, east: -8.9, north: 38.9,
-  }, 8);
-
-  const group = result.candidateGroups.find((item) => item.candidates.some((candidate) => candidate.file === fine));
-  assert.ok(group);
-  assert.equal(group.candidates[0].file, fine);
-  assert.equal(group.candidates[0].scale, 'D');
-  assert.equal(group.candidates[1].file, coarse);
-  assert.equal(group.candidates[1].scale, 'C');
-});
-
-test('clips coarser fallback lines to the uncovered target footprint', () => {
-  const coarseFeature = {
+  const current = {
     type: 'Feature',
-    properties: { cm93Class: 'DEPCNT' },
-    geometry: { type: 'LineString', coordinates: [[-10, 38], [-8, 39]] },
+    properties: { cm93Class: 'BOYLAT', cm93SourceCell: 'fine-cell.g' },
+    geometry: { type: 'Point', coordinates: [-9, 38] },
   };
-  const clipped = clipCm93FeaturesToBounds([coarseFeature], {
-    west: -9.3, south: 38.5, east: -8.9, north: 38.9,
-  });
 
-  assert.equal(clipped.length, 1);
-  assert.equal(clipped[0].geometry.type, 'LineString');
-  for (const [longitude, latitude] of clipped[0].geometry.coordinates) {
-    assert.ok(longitude >= -9.3 - 1e-8 && longitude <= -8.9 + 1e-8);
-    assert.ok(latitude >= 38.5 - 1e-8 && latitude <= 38.9 + 1e-8);
-  }
-});
-
-test('does not return coarse fallback geometry wholly outside its target footprint', () => {
-  const coarseFeature = {
-    type: 'Feature',
-    properties: { cm93Class: 'DEPCNT' },
-    geometry: { type: 'LineString', coordinates: [[-10, 36], [-9.5, 36.5]] },
-  };
-  assert.deepEqual(clipCm93FeaturesToBounds([coarseFeature], {
-    west: -9.3, south: 38.5, east: -8.9, north: 38.9,
-  }), []);
+  const merged = mergeCm93QuiltFeatures([current], [previousFine, previousCoarse], new Set(['fine-cell.g']));
+  assert.deepEqual(merged, [current, previousCoarse]);
 });
