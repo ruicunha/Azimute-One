@@ -17,10 +17,12 @@ test('selects only cells matching the chosen scale and viewport grid', () => {
   const target = {
     name: '03841050.D',
     webkitRelativePath: 'cm93/03301020/D/03841050.D',
+    arrayBuffer: async () => new ArrayBuffer(0),
   };
   const otherScale = {
     name: '03841050.E',
     webkitRelativePath: 'cm93/03301020/E/03841050.E',
+    arrayBuffer: async () => new ArrayBuffer(0),
   };
   const result = selectCm93ViewportCells([target, otherScale], {
     west: -9.3, south: 38.5, east: -8.9, north: 38.9,
