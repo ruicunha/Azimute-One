@@ -269,7 +269,7 @@ export default function App() {
         const dictionary = parseCm93Dictionaries(objectDictionary, attributeDictionary);
         dictionaryStats = { objects: dictionary.objectsByCode.size, attributes: dictionary.attributesByCode.size };
       }
-      const cellFiles = fileList.filter((file) => /\\.[A-GZ]$/i.test(file.name))
+      const cellFiles = fileList.filter((file) => /\.[A-GZ]$/i.test(file.name))
         .sort((left, right) => (left.webkitRelativePath || left.name).localeCompare(right.webkitRelativePath || right.name));
       const sample = cellFiles.slice(0, Math.min(12, cellFiles.length));
       const failures: string[] = [];
