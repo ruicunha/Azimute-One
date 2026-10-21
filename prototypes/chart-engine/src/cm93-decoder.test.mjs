@@ -46,6 +46,8 @@ test('dictionary parser resolves object classes and attribute definitions', () =
 });
 
 test('coordinate conversion rejects impossible WGS84 coordinates', () => {
-  assert.deepEqual(cm93OffsetsToWgs84(-9, 38, 1, 2, 0.01, 0.01), [-8.99, 38.02]);
+  const point = cm93OffsetsToWgs84(-9, 38, 1, 2, 0.01, 0.01);
+  assert.ok(Math.abs(point[0] - (-8.99)) < 1e-9);
+  assert.ok(Math.abs(point[1] - 38.02) < 1e-9);
   assert.throws(() => cm93OffsetsToWgs84(179, 89, 1000, 1000, 1, 1), /outside WGS84 bounds/);
 });
