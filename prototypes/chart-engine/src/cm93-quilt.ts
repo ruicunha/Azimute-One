@@ -7,6 +7,7 @@
 export type Cm93CellFile = {
   name: string;
   webkitRelativePath?: string;
+  arrayBuffer: () => Promise<ArrayBuffer>;
 };
 
 export type Cm93ViewportBounds = {
