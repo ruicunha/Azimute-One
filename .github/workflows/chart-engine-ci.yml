@@ -1,0 +1,42 @@
+name: Chart engine CI
+
+on:
+  pull_request:
+    paths:
+      - 'prototypes/chart-engine/**'
+      - '.github/workflows/chart-engine-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'prototypes/chart-engine/**'
+      - '.github/workflows/chart-engine-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: prototypes/chart-engine/package-lock.json
+
+      - name: Install dependencies
+        working-directory: prototypes/chart-engine
+        run: npm install
+
+      - name: Run CM93 decoder tests
+        working-directory: prototypes/chart-engine
+        run: npm test
+
+      - name: Build chart engine
+        working-directory: prototypes/chart-engine
+        run: npm run build
