@@ -203,6 +203,7 @@ export function clipCm93FeaturesToBounds(
   };
   const output: GeoJSON.Feature[] = [];
   for (const feature of features) {
+    if (!feature.geometry) continue;
     const geometry = clipGeometry(feature.geometry);
     if (geometry) output.push({ ...feature, geometry });
   }
