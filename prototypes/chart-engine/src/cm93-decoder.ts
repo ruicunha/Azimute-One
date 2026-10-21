@@ -623,3 +623,33 @@ export function decodeCm93FeatureAttributes(
   }
   return attributes;
 }
+
+
+const CM93_MERCATOR_RADIUS_METERS = 6_378_388;
+
+/**
+ * Convert a CM93 cell's 16-bit grid coordinate to longitude/latitude.
+ * CM93's projected header bounds use a spherical Mercator radius of 6,378,388 m.
+ */
+export function cm93GridPointToWgs84(
+  metadata: Cm93CellMetadata,
+  x: number,
+  y: number,
+): [number, number] {
+  if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || x > 65_535 || y < 0 || y > 65_535) {
+    throw new Cm93DecodeError('CM93 grid coordinates must be unsigned 16-bit values.');
+  }
+  const bounds = metadata.projectedBounds;
+  const circumference = 2 * Math.PI * CM93_MERCATOR_RADIUS_METERS;
+  let deltaEasting = bounds.east - bounds.west;
+  if (deltaEasting < 0) deltaEasting += circumference;
+  const easting = bounds.west + (x / 65_535) * deltaEasting;
+  const northing = bounds.south + (y / 65_535) * (bounds.north - bounds.south);
+  const rawLongitude = (easting / CM93_MERCATOR_RADIUS_METERS) * (180 / Math.PI);
+  const longitude = ((rawLongitude + 540) % 360) - 180;
+  const latitude = (2 * Math.atan(Math.exp(northing / CM93_MERCATOR_RADIUS_METERS)) - Math.PI / 2) * (180 / Math.PI);
+  if (!Number.isFinite(longitude) || !Number.isFinite(latitude) || Math.abs(latitude) > 90) {
+    throw new Cm93DecodeError('CM93 grid point could not be converted to WGS84.');
+  }
+  return [longitude, latitude];
+}
