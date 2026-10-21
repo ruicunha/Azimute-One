@@ -5,6 +5,7 @@ import { parseS57, toGeoJSON } from '@s57-parser/s57';
 import { unzipSync } from 'fflate';
 import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-catalog';
 import { planChartQuilt } from './chart-quilt';
+import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -36,6 +37,7 @@ function findCell(bytes: Uint8Array, filename: string): { name: string; bytes: U
 
 export default function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
+  const cm93DirectoryInput = useRef<HTMLInputElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const activeChartIds = useRef(new Set<string>());
   const loadingChartIds = useRef(new Set<string>());
@@ -48,6 +50,7 @@ export default function App() {
   const [selectedCharts, setSelectedCharts] = useState<string[]>([]);
   const [cmapMetadata, setCmapMetadata] = useState<RasterChartMetadata | null>(null);
   const [cmapVisible, setCmapVisible] = useState(false);
+  const [cm93Summary, setCm93Summary] = useState<Cm93DatasetSummary | null>(null);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -238,6 +241,32 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    // Chromium-based browsers expose directory selection via webkitdirectory.
+    // Set it imperatively to avoid relying on non-standard React DOM typings.
+    cm93DirectoryInput.current?.setAttribute('webkitdirectory', '');
+    cm93DirectoryInput.current?.setAttribute('directory', '');
+  }, []);
+
+  const onCm93Directory = (files?: FileList | null) => {
+    if (!files?.length) return;
+    try {
+      const summary = inspectCm93Files(files);
+      setCm93Summary(summary);
+      setMessage(summary.isLikelyCm93V2
+        ? `CM93 V2 dataset recognized: ${summary.regionCount} regions and ${summary.fileCount.toLocaleString()} files. Binary chart decoding/rendering is the next implementation step.`
+        : 'The selected directory does not look like a complete CM93 V2 dataset. Review the validation details below.');
+      setStatus(summary.isLikelyCm93V2 ? 'ready' : 'error');
+      setChartName(summary.isLikelyCm93V2 ? `CM93 V2 — ${summary.rootName}` : 'Unrecognized CM93 dataset');
+      setSource('CM93 V2 directory');
+      setFeatureCount(null);
+    } catch (error) {
+      setCm93Summary(null);
+      setStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Could not inspect the selected CM93 directory.');
+    }
+  };
+
   const toggleCmapRaster = () => {
     const map = mapRef.current;
     if (!map || !cmapMetadata || !map.getLayer('cmap-raster-layer')) return;
@@ -282,6 +311,20 @@ export default function App() {
             {selectedCharts.length ? <ul>{selectedCharts.map((title) => <li key={title}>{title}</li>)}</ul> : <p>No chart currently matches this viewport.</p>}
           </div>
           <label className="file-button"><span>Load ENC file</span><input type="file" accept=".000,.zip,application/zip,application/octet-stream" onChange={(event) => void onFile(event.target.files?.[0])} /></label>
+          <label className="file-button"><span>Inspect CM93 V2 directory</span><input ref={cm93DirectoryInput} type="file" multiple onChange={(event) => onCm93Directory(event.target.files)} /></label>
+          {cm93Summary && <div className="legend cm93-summary">
+            <span className="field-label">CM93 DATASET INVENTORY</span>
+            <ul>
+              <li>{cm93Summary.isLikelyCm93V2 ? 'CM93 V2 structure recognized' : 'CM93 V2 structure not fully recognized'}</li>
+              <li>{cm93Summary.fileCount.toLocaleString()} files · {cm93Summary.regionCount} region folders</li>
+              <li>Edition marker(s): {cm93Summary.editionDates.length ? cm93Summary.editionDates.join(', ') : 'not found'}</li>
+              <li>Scales: {cm93Summary.scales.map((scale) => `${scale.code} (${scale.fileCount.toLocaleString()} files)`).join(', ') || 'none found'}</li>
+              <li>Object dictionary: {cm93Summary.hasObjectDictionary ? 'found' : 'missing'}</li>
+              <li>Attribute dictionary: {cm93Summary.hasAttributeDictionary ? 'found' : 'missing'}</li>
+            </ul>
+            {cm93Summary.warnings.length > 0 && <p>{cm93Summary.warnings.join(' ')}</p>}
+            <p>Dataset recognition is implemented; CM93 binary decoding and map portrayal are not implemented yet.</p>
+          </div>}
           {cmapMetadata && <button className="secondary-button" type="button" onClick={toggleCmapRaster}>{cmapVisible ? 'Hide Portugal raster chart' : 'Show Portugal raster chart'}</button>}
           <div className="legend">
             <span className="field-label">WHAT TO INSPECT</span>
