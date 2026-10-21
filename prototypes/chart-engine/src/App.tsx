@@ -434,11 +434,22 @@ export default function App() {
       map.addSource('cm93-active-cell', { type: 'geojson', data: result.geojson as never });
       map.addLayer({
         id: 'cm93-cell-fill', type: 'fill', source: 'cm93-active-cell',
-        paint: { 'fill-color': '#e8c96b', 'fill-opacity': 0.28 },
+        paint: {
+          'fill-color': ['match', ['get', 'cm93Class'],
+            'DEPARE', '#d5e8ec', 'DRGARE', '#d5e8ec', 'LNDARE', '#d9d6c8',
+            'UNSARE', '#d5e8ec', '#e5e0cb'],
+          'fill-opacity': 0.52,
+        },
       });
       map.addLayer({
         id: 'cm93-cell-lines', type: 'line', source: 'cm93-active-cell',
-        paint: { 'line-color': '#6f633d', 'line-width': 1 },
+        paint: {
+          'line-color': ['match', ['get', 'cm93Class'],
+            'DEPCNT', '#4e91b5', 'COALNE', '#5d6558', 'SLCONS', '#5d6558',
+            'CANAL', '#4e91b5', 'RIVERS', '#4e91b5', 'ROADWY', '#b78a64',
+            '#817d6d'],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 2, 0.35, 8, 0.8, 13, 1.35],
+        },
       });
       map.addLayer({
         id: 'cm93-cell-points', type: 'circle', source: 'cm93-active-cell',
@@ -447,7 +458,7 @@ export default function App() {
       });
       map.addLayer({
         id: 'cm93-cell-labels', type: 'symbol', source: 'cm93-active-cell',
-        filter: ['==', ['geometry-type'], 'Point'],
+        filter: ['all', ['==', ['geometry-type'], 'Point'], ['any', ['has', 'OBJNAM'], ['has', 'NOBJNM']], ['!=', ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''], '']],
         layout: {
           'text-field': ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''],
           'text-size': 10, 'text-offset': [0, 1.1], 'text-optional': true,
@@ -551,20 +562,39 @@ export default function App() {
       });
       map.addLayer({
         id: 'cm93-cell-fill', type: 'fill', source: 'cm93-active-cell',
-        paint: { 'fill-color': '#e8c96b', 'fill-opacity': 0.28 },
+        paint: {
+          'fill-color': ['match', ['get', 'cm93Class'],
+            'DEPARE', '#d5e8ec', 'DRGARE', '#d5e8ec', 'LNDARE', '#d9d6c8',
+            'UNSARE', '#d5e8ec', '#e5e0cb'],
+          'fill-opacity': 0.52,
+        },
       });
       map.addLayer({
         id: 'cm93-cell-lines', type: 'line', source: 'cm93-active-cell',
-        paint: { 'line-color': '#6f633d', 'line-width': 1 },
+        paint: {
+          'line-color': ['match', ['get', 'cm93Class'],
+            'DEPCNT', '#4e91b5', 'COALNE', '#5d6558', 'SLCONS', '#5d6558',
+            'CANAL', '#4e91b5', 'RIVERS', '#4e91b5', 'ROADWY', '#b78a64',
+            '#817d6d'],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 2, 0.35, 8, 0.8, 13, 1.35],
+        },
       });
       map.addLayer({
         id: 'cm93-cell-points', type: 'circle', source: 'cm93-active-cell',
         filter: ['==', ['geometry-type'], 'Point'],
-        paint: { 'circle-radius': 3, 'circle-color': '#d94b36', 'circle-stroke-color': '#fff7df', 'circle-stroke-width': 1 },
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 1, 8, 2, 13, 3],
+          'circle-color': ['match', ['get', 'cm93Class'],
+            'BCNLAT', '#d94b36', 'BCNCAR', '#d94b36', 'BCNSAW', '#d94b36',
+            'BOYLAT', '#d94b36', 'BOYCAR', '#d94b36', 'BOYSAW', '#d94b36',
+            'LIGHTS', '#e6b94a', 'LNDMRK', '#8c5a36', '#59666b'],
+          'circle-stroke-color': '#f6f1df',
+          'circle-stroke-width': 0.5,
+        },
       });
       map.addLayer({
         id: 'cm93-cell-labels', type: 'symbol', source: 'cm93-active-cell',
-        filter: ['==', ['geometry-type'], 'Point'],
+        filter: ['all', ['==', ['geometry-type'], 'Point'], ['any', ['has', 'OBJNAM'], ['has', 'NOBJNM']], ['!=', ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''], '']],
         layout: {
           'text-field': ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''],
           'text-size': 10, 'text-offset': [0, 1.1], 'text-optional': true,
@@ -678,7 +708,7 @@ export default function App() {
       });
       map.addLayer({
         id: 'cm93-quilt-labels', type: 'symbol', source: 'cm93-quilt',
-        filter: ['==', ['geometry-type'], 'Point'],
+        filter: ['all', ['==', ['geometry-type'], 'Point'], ['any', ['has', 'OBJNAM'], ['has', 'NOBJNM']], ['!=', ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''], '']],
         layout: {
           'text-field': ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''],
           'text-size': 10, 'text-offset': [0, 1.1], 'text-optional': true,
@@ -806,7 +836,7 @@ export default function App() {
               {cm93DictionaryStats && <li>Parsed dictionaries: {cm93DictionaryStats.objects.toLocaleString()} object classes · {cm93DictionaryStats.attributes.toLocaleString()} attributes</li>}
             </ul>
             {cm93Summary.warnings.length > 0 && <p>{cm93Summary.warnings.join(' ')}</p>}
-            <p>Independent byte substitution and cell-header validation are implemented. A sample of up to 12 real cells is checked for consistent header and table boundaries. Geometry extraction and portrayal remain outstanding.</p>
+            <p>Independent byte substitution and cell-header validation are implemented. A sample of up to 12 real cells is checked for consistent header and table boundaries. Geometry is kept as separate connected paths; class-aware styling is preliminary and full nautical portrayal remains outstanding.</p>
             {cm93CellStats && <ul>
               <li>Cell record parsing: {cm93CellStats.valid}/{cm93CellStats.checked} passed</li>
               <li>Sample totals: {cm93CellStats.features.toLocaleString()} feature records · {cm93CellStats.vectors.toLocaleString()} vector records · {cm93CellStats.vectorPoints.toLocaleString()} vector points</li>
