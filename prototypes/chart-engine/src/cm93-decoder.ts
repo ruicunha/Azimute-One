@@ -745,6 +745,7 @@ export function cm93CellToGeoJSON(cell: Cm93ParsedCell, dictionary: Cm93Dictiona
           coordinates: rings.map((ring) => [toCoordinates(ring)]),
         };
       }
+    }
 
     if (!geometry) {
       omittedGeometryCount++;
