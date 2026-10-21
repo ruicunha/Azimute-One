@@ -1,0 +1,97 @@
+name: Deploy chart-engine prototype to GitHub Pages
+
+on:
+  push:
+    branches:
+      - poc/chart-engine-noaa-enc
+    paths:
+      - 'prototypes/chart-engine/**'
+      - '.github/workflows/deploy-chart-engine-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: chart-engine-pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: prototypes/chart-engine
+        run: npm install
+
+      - name: Download chart collection
+        run: |
+          mkdir -p prototypes/chart-engine/public
+          curl --fail --location --retry 3 \
+            https://charts.noaa.gov/ENCs/US1GC09M.zip \
+            --output prototypes/chart-engine/public/sample-chart-small-scale.zip
+          unzip -t prototypes/chart-engine/public/sample-chart-small-scale.zip
+          curl --fail --location --retry 3 \
+            https://charts.noaa.gov/ENCs/US5MA12M.zip \
+            --output prototypes/chart-engine/public/sample-chart.zip
+          unzip -t prototypes/chart-engine/public/sample-chart.zip
+          curl --fail --location --retry 3 \
+            https://charts.noaa.gov/ENCs/US5MA11M.zip \
+            --output prototypes/chart-engine/public/sample-chart-inner-harbor.zip
+          unzip -t prototypes/chart-engine/public/sample-chart-inner-harbor.zip
+          curl --fail --location --retry 3 \
+            https://www.chs.gc.ca/documents/charts-cartes/instruction-formation/9995_S57ENC.zip \
+            --output prototypes/chart-engine/public/sample-chart-chs.zip
+          unzip -t prototypes/chart-engine/public/sample-chart-chs.zip
+          curl --fail --location --retry 3 \
+            https://charts.noaa.gov/ENCs/US4NY13M.zip \
+            --output prototypes/chart-engine/public/sample-chart-new-york-approaches.zip
+          unzip -t prototypes/chart-engine/public/sample-chart-new-york-approaches.zip
+          curl --fail --location --retry 3 \
+            https://charts.noaa.gov/ENCs/US5NY14M.zip \
+            --output prototypes/chart-engine/public/sample-chart-new-york-harbor.zip
+          unzip -t prototypes/chart-engine/public/sample-chart-new-york-harbor.zip
+
+      - name: Download optional MBTiles raster chart
+        env:
+          CMAP_MBTILES_URL: ${{ secrets.CMAP_MBTILES_URL }}
+        run: |
+          if [ -z "$CMAP_MBTILES_URL" ]; then
+            echo "CMAP_MBTILES_URL is not configured; skipping optional raster chart."
+            exit 0
+          fi
+          curl --fail --location --retry 3 --silent --show-error \
+            "$CMAP_MBTILES_URL" \
+            --output /tmp/cmap-raster-chart.zip
+          python3 prototypes/chart-engine/scripts/mbtiles_to_tiles.py \
+            /tmp/cmap-raster-chart.zip \
+            prototypes/chart-engine/public/cmap-tiles
+
+      - name: Build site
+        working-directory: prototypes/chart-engine
+        run: npm run build -- --base=/Azimute-One/
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: prototypes/chart-engine/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
