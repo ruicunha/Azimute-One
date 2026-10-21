@@ -365,7 +365,6 @@ export default function App() {
           selectedCellListTruncated: selectedCells.length > 60,
           renderedFeaturesAtClick: renderedFeatures,
           renderedFeatureCountAtClick: renderedFeatures.length,
-          lastQuiltStats: cm93QuiltStats ?? null,
         },
         notes: [
           'Selected-cell paths are the current filename/grid-based candidates, not verified M_COVR coverage.',
