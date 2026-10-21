@@ -71,7 +71,16 @@ function findCm93CellForPosition(files: File[], latitude: number, longitude: num
   return undefined;
 }
 
-const cm93QuiltLayerIds = ['cm93-quilt-labels', 'cm93-quilt-points', 'cm93-quilt-lines', 'cm93-quilt-fill'];
+const cm93QuiltLayerIds = ['cm93-quilt-points', 'cm93-quilt-fill'];
+
+function addCm93PointLayer(map: MapLibreMap, source: string, layerId: string, visibleClasses: string[]): void {
+  map.addLayer({ id: layerId, type: 'circle', source,
+    filter: ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', visibleClasses]]],
+    paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 2, 8, 3, 13, 4],
+      'circle-color': ['match', ['get', 'cm93Class'], 'LIGHTS', '#e6b94a', 'LNDMRK', '#8c5a36', '#d94b36'],
+      'circle-stroke-color': '#f6f1df', 'circle-stroke-width': 0.8 },
+  });
+}
 
 function clearCm93Quilt(map: MapLibreMap): void {
   for (const layerId of cm93QuiltLayerIds) {
@@ -103,6 +112,9 @@ export default function App() {
   const [cmapVisible, setCmapVisible] = useState(false);
   const [cm93Summary, setCm93Summary] = useState<Cm93DatasetSummary | null>(null);
   const [cm93AutoEnabled, setCm93AutoEnabled] = useState(false);
+  const [cm93PointClassCounts, setCm93PointClassCounts] = useState<Array<{ name: string; count: number }>>([]);
+  const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
+  const visibleCm93PointClassesRef = useRef<string[]>([]);
   const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[] } | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
   const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; classes: string[]; attributes: string[]; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
@@ -438,43 +450,19 @@ export default function App() {
           'fill-color': ['match', ['get', 'cm93Class'],
             'DEPARE', '#d5e8ec', 'DRGARE', '#d5e8ec', 'LNDARE', '#d9d6c8',
             'UNSARE', '#d5e8ec', '#e5e0cb'],
-          'fill-opacity': 0.52,
+          'fill-opacity': 0.52, 'fill-opacity-transition': { duration: 180, delay: 0 },
         },
       });
-      map.addLayer({
-        id: 'cm93-cell-lines', type: 'line', source: 'cm93-active-cell',
-        paint: {
-          'line-color': ['match', ['get', 'cm93Class'],
-            'DEPCNT', '#4e91b5', 'COALNE', '#5d6558', 'SLCONS', '#5d6558',
-            'CANAL', '#4e91b5', 'RIVERS', '#4e91b5', 'ROADWY', '#b78a64',
-            '#817d6d'],
-          'line-width': ['interpolate', ['linear'], ['zoom'], 2, 0.35, 8, 0.8, 13, 1.35],
-        },
-      });
-      map.addLayer({
-        id: 'cm93-cell-points', type: 'circle', source: 'cm93-active-cell',
-        filter: ['==', ['geometry-type'], 'Point'],
-        paint: {  'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 1, 8, 2, 13, 3],
-          'circle-color': ['match', ['get', 'cm93Class'],
-            'BCNLAT', '#d94b36', 'BCNCAR', '#d94b36', 'BCNSAW', '#d94b36',
-            'BOYLAT', '#d94b36', 'BOYCAR', '#d94b36', 'BOYSAW', '#d94b36',
-            'LIGHTS', '#e6b94a', 'LNDMRK', '#8c5a36', '#59666b'],
-          'circle-stroke-color': '#f6f1df', 'circle-stroke-width': 0.5 },
-      });
-      map.addLayer({
-        id: 'cm93-cell-labels', type: 'symbol', source: 'cm93-active-cell',
-        filter: ['all', ['==', ['geometry-type'], 'Point'], ['any', ['has', 'OBJNAM'], ['has', 'NOBJNM']], ['!=', ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''], '']],
-        layout: {
-          'text-field': ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''],
-          'text-size': 10, 'text-offset': [0, 1.1], 'text-optional': true,
-        },
-        paint: { 'text-color': '#273b43', 'text-halo-color': '#f6f1df', 'text-halo-width': 1 },
-      });
+      addCm93PointLayer(map, 'cm93-active-cell', 'cm93-cell-points', visibleCm93PointClassesRef.current);
+
+
+
       const bounds = cell.metadata.geographicBounds;
       if (bounds.west <= bounds.east) {
         map.fitBounds([[bounds.west, bounds.south], [bounds.east, bounds.north]], { padding: 40, maxZoom: 13, duration: 600 });
       }
       setFeatureCount(result.geojson.features.length);
+      setCm93PointClassCounts([...result.geojson.features.reduce((counts, feature) => { if (feature.geometry.type === 'Point' || feature.geometry.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); counts.set(name, (counts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } return counts; }, new Map<string, number>())].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count));
       setChartName(file.name);
       setSource('CM93 V2 decoded cell');
       setStatus('ready');
@@ -574,39 +562,14 @@ export default function App() {
           'fill-opacity': 0.52,
         },
       });
-      map.addLayer({
-        id: 'cm93-cell-lines', type: 'line', source: 'cm93-active-cell',
-        paint: {
-          'line-color': ['match', ['get', 'cm93Class'],
-            'DEPCNT', '#4e91b5', 'COALNE', '#5d6558', 'SLCONS', '#5d6558',
-            'CANAL', '#4e91b5', 'RIVERS', '#4e91b5', 'ROADWY', '#b78a64',
-            '#817d6d'],
-          'line-width': ['interpolate', ['linear'], ['zoom'], 2, 0.35, 8, 0.8, 13, 1.35],
-        },
-      });
-      map.addLayer({
-        id: 'cm93-cell-points', type: 'circle', source: 'cm93-active-cell',
-        filter: ['==', ['geometry-type'], 'Point'],
-        paint: {
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 1, 8, 2, 13, 3],
-          'circle-color': ['match', ['get', 'cm93Class'],
-            'BCNLAT', '#d94b36', 'BCNCAR', '#d94b36', 'BCNSAW', '#d94b36',
-            'BOYLAT', '#d94b36', 'BOYCAR', '#d94b36', 'BOYSAW', '#d94b36',
-            'LIGHTS', '#e6b94a', 'LNDMRK', '#8c5a36', '#59666b'],
-          'circle-stroke-color': '#f6f1df',
-          'circle-stroke-width': 0.5,
-        },
-      });
-      map.addLayer({
-        id: 'cm93-cell-labels', type: 'symbol', source: 'cm93-active-cell',
-        filter: ['all', ['==', ['geometry-type'], 'Point'], ['any', ['has', 'OBJNAM'], ['has', 'NOBJNM']], ['!=', ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''], '']],
-        layout: {
-          'text-field': ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''],
-          'text-size': 10, 'text-offset': [0, 1.1], 'text-optional': true,
-        },
-        paint: { 'text-color': '#273b43', 'text-halo-color': '#f6f1df', 'text-halo-width': 1 },
-      });
+      addCm93PointLayer(map, 'cm93-active-cell', 'cm93-cell-points', visibleCm93PointClassesRef.current);
+
+
+
       map.fitBounds([[west, south], [east, north]], { padding: 40, maxZoom: 8, duration: 600 });
+    const pointCounts = new Map<string, number>();
+    for (const feature of features) { if (feature.geometry.type === 'Point' || feature.geometry.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } }
+    setCm93PointClassCounts([...pointCounts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count));
       cm93OverviewScaleRef.current = scale;
       cm93AutoEnabledRef.current = true;
       setCm93AutoEnabled(true);
@@ -708,30 +671,10 @@ export default function App() {
           'fill-opacity': 0.52,
         },
       });
-      map.addLayer({
-        id: 'cm93-quilt-lines', type: 'line', source: 'cm93-quilt',
-        paint: {
-          'line-color': ['match', ['get', 'cm93Class'],
-            'DEPCNT', '#4e91b5', 'COALNE', '#5d6558', 'SLCONS', '#5d6558',
-            'CANAL', '#4e91b5', 'RIVERS', '#4e91b5', 'ROADWY', '#b78a64',
-            '#817d6d'],
-          'line-width': ['interpolate', ['linear'], ['zoom'], 2, 0.35, 8, 0.8, 13, 1.35],
-        },
-      });
-      map.addLayer({
-        id: 'cm93-quilt-points', type: 'circle', source: 'cm93-quilt',
-        filter: ['==', ['geometry-type'], 'Point'],
-        paint: { 'circle-radius': 4, 'circle-color': '#d94b36', 'circle-stroke-color': '#fff7df', 'circle-stroke-width': 1 },
-      });
-      map.addLayer({
-        id: 'cm93-quilt-labels', type: 'symbol', source: 'cm93-quilt',
-        filter: ['all', ['==', ['geometry-type'], 'Point'], ['any', ['has', 'OBJNAM'], ['has', 'NOBJNM']], ['!=', ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''], '']],
-        layout: {
-          'text-field': ['coalesce', ['get', 'OBJNAM'], ['get', 'NOBJNM'], ''],
-          'text-size': 10, 'text-offset': [0, 1.1], 'text-optional': true,
-        },
-        paint: { 'text-color': '#273b43', 'text-halo-color': '#f6f1df', 'text-halo-width': 1 },
-      });
+      addCm93PointLayer(map, 'cm93-quilt', 'cm93-quilt-points', visibleCm93PointClassesRef.current);
+
+
+
     }
 
     // The quilt source now contains the finest available cell for each target
@@ -746,6 +689,9 @@ export default function App() {
       .filter((entry) => entry[1])
       .map(([scale, count]) => scale + ':' + count)
       .join(', ');
+    const pointCounts = new Map<string, number>();
+    for (const feature of features) { if (feature.geometry.type === 'Point' || feature.geometry.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } }
+    setCm93PointClassCounts([...pointCounts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count));
     const classCounts = new Map<string, { count: number; geometries: Set<string> }>();
     for (const feature of features) {
       const className = String(feature.properties?.cm93Class ?? 'UNKNOWN');
@@ -796,6 +742,13 @@ export default function App() {
     }
   };
 
+  const toggleCm93PointClass = (name: string) => {
+    const next = visibleCm93PointClassesRef.current.includes(name) ? visibleCm93PointClassesRef.current.filter((item) => item !== name) : [...visibleCm93PointClassesRef.current, name];
+    visibleCm93PointClassesRef.current = next; setVisibleCm93PointClasses(next);
+    const map = mapRef.current; if (!map) return;
+    for (const layerId of ['cm93-cell-points', 'cm93-quilt-points']) if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+  };
+
   const toggleCmapRaster = () => {
     const map = mapRef.current;
     if (!map || !cmapMetadata || !map.getLayer('cmap-raster-layer')) return;
@@ -844,6 +797,7 @@ export default function App() {
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93CellAtMapCenter()}>Render CM93 cell at map centre</button>}
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93Overview()}>Render CM93 dataset overview</button>}
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={toggleCm93Auto}>{cm93AutoEnabled ? 'Disable automatic CM93 detail' : 'Enable automatic CM93 detail'}</button>}
+          {cm93Summary && <div className="legend"><span className="field-label">CM93 POINT TYPES (HIDDEN BY DEFAULT)</span><p>All CM93 line features and point markers are hidden by default to remove clutter. Select point classes to show only those types.</p>{cm93PointClassCounts.length ? <ul>{cm93PointClassCounts.map(({ name, count }) => <li key={name}><label><input type="checkbox" checked={visibleCm93PointClasses.includes(name)} onChange={() => toggleCm93PointClass(name)} /> {name} — {count.toLocaleString()} points</label></li>)}</ul> : <p>Render a CM93 cell, overview or enable automatic detail to count point types in the active chart.</p>}</div>}
           {cm93AutoEnabled && cm93QuiltStats && <div className="legend">
             <span className="field-label">AUTOMATIC CM93 VIEWPORT QUILT</span>
             <ul>
