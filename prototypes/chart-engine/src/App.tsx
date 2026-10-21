@@ -707,7 +707,10 @@ export default function App() {
     }, map.getZoom(), 180);
 
     if (selection.files.length === 0) {
-      clearCm93Quilt(map);
+      // Do not clear the last good quilt just because the current scale/path
+      // lookup temporarily finds no cell. This avoids a blank flash during
+      // scale transitions; the previous GeoJSON remains geographically placed
+      // and naturally moves out of view as the user pans away.
       setCm93QuiltStats({
         scale: selection.scale,
         cells: 0,
