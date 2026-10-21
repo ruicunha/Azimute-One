@@ -318,6 +318,41 @@ export type Cm93CellMetadata = {
 
 export type Cm93VectorRecord = { points: Array<[number, number]> };
 export type Cm93Point3dRecord = { points: Array<[number, number, number]> };
+
+export type Cm93VectorReference = { index: number; segmentUsage: number };
+
+/**
+ * Assemble only vector segments whose endpoints actually meet. CM93 feature
+ * references can include several independent parts; concatenating every point
+ * unconditionally invents lines across gaps in the source geometry.
+ */
+export function assembleCm93VectorPaths(
+  vectors: Cm93VectorRecord[],
+  references: Cm93VectorReference[],
+): Array<Array<[number, number]>> {
+  const paths: Array<Array<[number, number]>> = [];
+  for (const reference of references) {
+    const source = vectors[reference.index]?.points ?? [];
+    const segment = (reference.segmentUsage & 4) !== 0 ? [...source].reverse() : [...source];
+    const points = segment.filter((point, index) => {
+      if (index === 0) return true;
+      const previous = segment[index - 1];
+      return point[0] !== previous[0] || point[1] !== previous[1];
+    });
+    if (points.length < 2) continue;
+
+    const current = paths[paths.length - 1];
+    const first = points[0];
+    const last = current?.[current.length - 1];
+    if (current && last && last[0] === first[0] && last[1] === first[1]) {
+      current.push(...points.slice(1));
+    } else {
+      // Keep disconnected geometry separate instead of drawing a false bridge.
+      paths.push(points);
+    }
+  }
+  return paths;
+}
 export type Cm93GeometryReference =
   | { kind: 'area' | 'line'; vectors: Array<{ index: number; segmentUsage: number }> }
   | { kind: 'point'; index: number }
@@ -667,10 +702,6 @@ export function cm93CellToGeoJSON(cell: Cm93ParsedCell, dictionary: Cm93Dictiona
   const warnings: string[] = [];
   let omittedGeometryCount = 0;
 
-  const orientedVectorPoints = (reference: { index: number; segmentUsage: number }): Array<[number, number]> => {
-    const points = cell.vectors[reference.index]?.points ?? [];
-    return (reference.segmentUsage & 4) !== 0 ? [...points].reverse() : points;
-  };
   const toCoordinates = (points: Array<[number, number]>): GeoJSON.Position[] =>
     points.map(([x, y]) => cm93GridPointToWgs84(cell.metadata, x, y));
 
@@ -688,33 +719,32 @@ export function cm93CellToGeoJSON(cell: Cm93ParsedCell, dictionary: Cm93Dictiona
         };
       }
     } else if (record.geometry.kind === 'line') {
-      const points: Array<[number, number]> = [];
-      for (const reference of record.geometry.vectors) {
-        for (const point of orientedVectorPoints(reference)) {
-          const previous = points[points.length - 1];
-          if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) points.push(point);
-        }
+      const paths = assembleCm93VectorPaths(cell.vectors, record.geometry.vectors)
+        .filter((path) => path.length >= 2);
+      if (paths.length === 1) {
+        geometry = { type: 'LineString', coordinates: toCoordinates(paths[0]) };
+      } else if (paths.length > 1) {
+        geometry = { type: 'MultiLineString', coordinates: paths.map(toCoordinates) };
       }
-      if (points.length >= 2) geometry = { type: 'LineString', coordinates: toCoordinates(points) };
     } else if (record.geometry.kind === 'area') {
-      const rings: Array<Array<[number, number]>> = [];
-      let ring: Array<[number, number]> = [];
-      for (const reference of record.geometry.vectors) {
-        const points = orientedVectorPoints(reference);
-        for (const point of points) {
-          const previous = ring[ring.length - 1];
-          if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) ring.push(point);
-        }
-        if (ring.length >= 4) {
-          const first = ring[0];
-          const last = ring[ring.length - 1];
-          if (first[0] === last[0] && first[1] === last[1]) {
-            rings.push(ring);
-            ring = [];
-          }
-        }
+      // Only closed rings are safe to fill. Open or disconnected fragments are
+      // omitted instead of being implicitly closed into misleading polygons.
+      const rings = assembleCm93VectorPaths(cell.vectors, record.geometry.vectors).filter((path) => {
+        if (path.length < 4) return false;
+        const first = path[0];
+        const last = path[path.length - 1];
+        return first[0] === last[0] && first[1] === last[1];
+      });
+      if (rings.length === 1) {
+        geometry = { type: 'Polygon', coordinates: [toCoordinates(rings[0])] };
+      } else if (rings.length > 1) {
+        // Until ring containment/orientation is decoded, do not guess which
+        // rings are holes. Preserve each closed ring as a separate polygon.
+        geometry = {
+          type: 'MultiPolygon',
+          coordinates: rings.map((ring) => [toCoordinates(ring)]),
+        };
       }
-      if (rings.length) geometry = { type: 'Polygon', coordinates: rings.map(toCoordinates) };
     }
 
     if (!geometry) {
