@@ -153,16 +153,13 @@ function cm93CellFootprint(sourceCell: string): Cm93CellFootprint | null {
   };
 }
 
-function longitudeIntervals(west: number, east: number): Array<[number, number]> {
-  if (east <= 1080) return [[west, east]];
-  return [[west, 1080], [0, east - 1080]];
-}
-
 function cellFootprintsOverlap(a: Cm93CellFootprint, b: Cm93CellFootprint): boolean {
   if (a.south >= b.north || b.south >= a.north) return false;
-  return longitudeIntervals(a.west, a.east).some(([aWest, aEast]) =>
-    longitudeIntervals(b.west, b.east).some(([bWest, bEast]) =>
-      aWest < bEast && bWest < aEast));
+
+  // CM93 longitude cell codes wrap at 1080 (360 degrees × 3 units/degree).
+  // Compare shifted copies so cells near 0/360 degrees are handled consistently.
+  return [-1080, 0, 1080].some((shift) =>
+    a.west < b.east + shift && b.west + shift < a.east);
 }
 
 /**
