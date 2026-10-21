@@ -12,6 +12,7 @@ This is an isolated Phase 0 experiment. It demonstrates chart selection from a c
 - Unload chart layers and their data when they are no longer selected.
 - Parse S-57 cells in the browser using `@s57-parser/s57` and render features through MapLibre GeoJSON sources/layers.
 - Load a local `.000` cell or exchange-set ZIP for manual inspection.
+- Select an extracted CM93 V2 directory to validate its edition markers, dictionaries, geographic region folders, and available scale folders.
 
 ## How selection works
 
@@ -31,13 +32,25 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. The hosted demo downloads sample NOAA ENC ZIPs during the Pages build. Local ENC files can be selected with **Load ENC file**. An optional MBTiles raster chart can also be converted into static XYZ PNG tiles and deployed alongside the ENC charts.
+Open the local URL printed by Vite. The hosted demo downloads sample NOAA ENC ZIPs during the Pages build. Local ENC files can be selected with **Load ENC file**. In supported Chromium browsers, **Inspect CM93 V2 directory** inventories an extracted CM93 V2 folder. An optional MBTiles raster chart can also be converted into static XYZ PNG tiles and deployed alongside the ENC charts.
 
 ## GitHub Pages demo
 
 The GitHub Actions workflow builds this prototype and downloads the sample NOAA ZIPs into the generated static site. After GitHub Pages is configured to use **GitHub Actions** in repository Settings → Pages, pushes to `main` deploy the demo at:
 
 https://ruicunha.github.io/Azimute-One/
+
+## CM93 V2 support status
+
+The prototype recognizes and inventories an extracted CM93 V2 directory selected through the browser directory picker. It checks for `CM93OBJ.DIC`, `CM93ATTR.DIC`, `YYYYMMDD.EXD` edition markers, eight-digit region directories, and chart files under scale folders A–G. It also parses the text dictionaries and reports the number of object classes and attribute definitions.
+
+The independent `src/cm93-decoder.ts` module now contains a recovered byte-substitution permutation, cell-header and table-boundary validation, geometry table parsing, feature-record framing, common typed-attribute decoding, Mercator-to-WGS84 conversion, and GeoJSON assembly. The substitution permutation was recovered by solving header-length constraints from the supplied CM93 V2 corpus, rather than copied from another decoder. Header checks passed for 11,434 of 11,435 cell files; one outlier is under investigation. The browser UI parses a sample of up to 12 cells and reports feature/vector counts, object classes, common attributes, and cell bounds.
+
+The inspector also has **Render CM93 cell at map centre**. After selecting the extracted directory, pan the map to an area covered by your CM93 dataset and use this action to locate the most detailed available cell for that position, decode its features, and display points, lines and polygons in MapLibre. Feature names and common attributes are included where decoded.
+
+This remains an experimental portrayal: some geometry types may be omitted if their boundaries cannot be reconstructed safely, uncommon attribute encodings are retained as raw data or skipped, and CM93 portrayal has not yet been validated against the same cells in OpenCPN. Do not use it for real-world navigation or safety decisions. The directory picker requires a browser that supports folder selection (typically Chromium-based browsers).
+
+CM93 V2 is a legacy proprietary chart format. Confirm that you have the right to use, decode, and redistribute the chart data before deploying datasets or derived features.
 
 ## Optional MBTiles raster charts
 
