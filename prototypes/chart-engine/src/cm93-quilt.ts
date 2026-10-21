@@ -168,6 +168,32 @@ function cellFootprintsOverlap(a: Cm93CellFootprint, b: Cm93CellFootprint): bool
  * cell is discarded, even when the source paths differ by scale. This avoids
  * drawing coarse geometry underneath the finer cell's replacement coverage.
  */
+const CM93_OVERLAP_BUCKET_SIZE = 12;
+const CM93_LONGITUDE_BUCKET_COUNT = 1080 / CM93_OVERLAP_BUCKET_SIZE;
+
+function footprintBucketKeys(footprint: Cm93CellFootprint): string[] {
+  const keys: string[] = [];
+  const firstLatitudeBucket = Math.floor(footprint.south / CM93_OVERLAP_BUCKET_SIZE);
+  const lastLatitudeBucket = Math.ceil(footprint.north / CM93_OVERLAP_BUCKET_SIZE) - 1;
+  const firstLongitudeBucket = Math.floor(footprint.west / CM93_OVERLAP_BUCKET_SIZE);
+  const lastLongitudeBucket = Math.ceil(footprint.east / CM93_OVERLAP_BUCKET_SIZE) - 1;
+
+  for (let latitudeBucket = firstLatitudeBucket; latitudeBucket <= lastLatitudeBucket; latitudeBucket++) {
+    for (let longitudeBucket = firstLongitudeBucket; longitudeBucket <= lastLongitudeBucket; longitudeBucket++) {
+      const wrappedLongitudeBucket =
+        ((longitudeBucket % CM93_LONGITUDE_BUCKET_COUNT) + CM93_LONGITUDE_BUCKET_COUNT) %
+        CM93_LONGITUDE_BUCKET_COUNT;
+      keys.push(`${latitudeBucket}:${wrappedLongitudeBucket}`);
+    }
+  }
+  return keys;
+}
+
+/**
+ * Merge current cells with previous-scale fallback data. The spatial bucket
+ * index narrows overlap checks to nearby selected cells instead of comparing
+ * every previous feature against the entire selected-cell list.
+ */
 export function mergeCm93QuiltFeatures(
   currentFeatures: GeoJSON.Feature[],
   previousFeatures: GeoJSON.Feature[],
@@ -176,13 +202,31 @@ export function mergeCm93QuiltFeatures(
   const selectedFootprints = [...selectedCellKeys]
     .map(cm93CellFootprint)
     .filter((footprint): footprint is Cm93CellFootprint => footprint !== null);
+  const selectedByBucket = new Map<string, Cm93CellFootprint[]>();
+
+  for (const footprint of selectedFootprints) {
+    for (const key of footprintBucketKeys(footprint)) {
+      const bucket = selectedByBucket.get(key);
+      if (bucket) bucket.push(footprint);
+      else selectedByBucket.set(key, [footprint]);
+    }
+  }
+
   const fallback = previousFeatures.filter((feature) => {
     const sourceCell = feature.properties?.cm93SourceCell;
     if (typeof sourceCell !== 'string' || selectedCellKeys.has(sourceCell)) return false;
     const previousFootprint = cm93CellFootprint(sourceCell);
     // Preserve legacy/unrecognized keys only when we cannot determine overlap.
-    return !previousFootprint || !selectedFootprints.some((selected) =>
-      cellFootprintsOverlap(previousFootprint, selected));
+    if (!previousFootprint) return true;
+
+    const candidates = new Set<Cm93CellFootprint>();
+    for (const key of footprintBucketKeys(previousFootprint)) {
+      for (const candidate of selectedByBucket.get(key) ?? []) candidates.add(candidate);
+    }
+    for (const candidate of candidates) {
+      if (cellFootprintsOverlap(previousFootprint, candidate)) return false;
+    }
+    return true;
   });
   return [...currentFeatures, ...fallback];
 }
