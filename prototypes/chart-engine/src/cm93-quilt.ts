@@ -70,8 +70,9 @@ export function selectCm93ViewportCells(
   const east = Math.max(bounds.west, bounds.east);
   const firstLatitudeCell = Math.floor((south * 3 + 240) / step) * step;
   const lastLatitudeCell = Math.floor((north * 3 + 240) / step) * step;
-  const firstLongitudeCell = Math.floor((west * 3) / step) * step;
-  const lastLongitudeCell = Math.floor((east * 3) / step) * step;
+  const longitudeSpan = Math.min(360, Math.max(0, east - west));
+  const firstLongitudeCell = Math.floor((normalizedLongitude(west) * 3) / step) * step;
+  const lastLongitudeCell = Math.floor((normalizedLongitude(west) * 3 + longitudeSpan * 3) / step) * step;
   const selected = new Map<string, Cm93CellFile>();
 
   for (let latitudeCell = firstLatitudeCell; latitudeCell <= lastLatitudeCell; latitudeCell += step) {
