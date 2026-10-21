@@ -705,7 +705,8 @@ export function cm93CellToGeoJSON(cell: Cm93ParsedCell, dictionary: Cm93Dictiona
   const toCoordinates = (points: Array<[number, number]>): GeoJSON.Position[] =>
     points.map(([x, y]) => cm93GridPointToWgs84(cell.metadata, x, y));
 
-  for (const record of cell.features) {
+  for (let recordIndex = 0; recordIndex < cell.features.length; recordIndex++) {
+    const record = cell.features[recordIndex];
     let geometry: GeoJSON.Geometry | null = null;
     if (record.geometry.kind === 'point') {
       const point = cell.points2d[record.geometry.index];
@@ -757,6 +758,9 @@ export function cm93CellToGeoJSON(cell: Cm93ParsedCell, dictionary: Cm93Dictiona
       cm93ObjectCode: record.objectCode,
       cm93Class: classDefinition?.name ?? `UNKNOWN_${record.objectCode}`,
       cm93GeometryType: record.geometryType,
+      cm93RecordIndex: recordIndex,
+      cm93RelatedObjectIndexes: record.relatedObjectIndexes,
+      cm93RelatedChild: false,
     };
     try {
       for (const attribute of decodeCm93FeatureAttributes(record.rawAttributes, record.attributeCount, dictionary)) {
@@ -766,6 +770,83 @@ export function cm93CellToGeoJSON(cell: Cm93ParsedCell, dictionary: Cm93Dictiona
       warnings.push(error instanceof Error ? error.message : 'A CM93 attribute block could not be decoded.');
     }
     features.push({ type: 'Feature', id: features.length, geometry, properties });
+  }
+
+  // Related-object pointers can split one navigational mark and its attributes
+  // across several records. Correlate only explicitly linked point records whose
+  // positions agree; proximity alone is never enough to merge chart objects.
+  const featureByRecord = new Map<number, GeoJSON.Feature>();
+  for (const feature of features) {
+    const index = Number(feature.properties?.cm93RecordIndex);
+    if (Number.isInteger(index)) featureByRecord.set(index, feature);
+  }
+  const parent = new Map<number, number>();
+  const rootOf = (index: number): number => {
+    const current = parent.get(index);
+    if (current === undefined) { parent.set(index, index); return index; }
+    if (current === index) return index;
+    const root = rootOf(current);
+    parent.set(index, root);
+    return root;
+  };
+  const join = (left: number, right: number) => {
+    const leftRoot = rootOf(left);
+    const rightRoot = rootOf(right);
+    if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot);
+  };
+  const samePoint = (left: GeoJSON.Feature, right: GeoJSON.Feature): boolean => {
+    if (left.geometry.type !== 'Point' || right.geometry.type !== 'Point') return false;
+    const a = left.geometry.coordinates;
+    const b = right.geometry.coordinates;
+    return Math.abs(a[0] - b[0]) <= 0.0003 && Math.abs(a[1] - b[1]) <= 0.0003;
+  };
+  for (const [recordIndex, feature] of featureByRecord) {
+    const record = cell.features[recordIndex];
+    for (const relatedIndex of record.relatedObjectIndexes) {
+      const relatedFeature = featureByRecord.get(relatedIndex);
+      if (relatedFeature && samePoint(feature, relatedFeature)) join(recordIndex, relatedIndex);
+    }
+  }
+  const groups = new Map<number, GeoJSON.Feature[]>();
+  for (const [recordIndex, feature] of featureByRecord) {
+    const root = rootOf(recordIndex);
+    const group = groups.get(root) ?? [];
+    group.push(feature);
+    groups.set(root, group);
+  }
+  const classPriority = (feature: GeoJSON.Feature): number => {
+    const name = String(feature.properties?.cm93Class ?? '');
+    if (name.startsWith('BOY')) return 4;
+    if (name.startsWith('BCN')) return 3;
+    if (name === 'LIGHTS') return 2;
+    return 1;
+  };
+  const detailAttributes = ['SIGPER', 'SIGGRP', 'HEIGHT', 'VALNMR', 'COLOUR', 'CATLIT'];
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    group.sort((left, right) => classPriority(right) - classPriority(left));
+    const primary = group[0];
+    const properties = primary.properties ?? {};
+    for (const related of group.slice(1)) {
+      for (const [name, value] of Object.entries(related.properties ?? {})) {
+        if (name.startsWith('cm93') || value === null || value === undefined || value === '') continue;
+        if (properties[name] === undefined || properties[name] === null || properties[name] === '') properties[name] = value;
+      }
+      if (related.properties) related.properties.cm93RelatedChild = true;
+    }
+    const labelParts: string[] = [];
+    const objectName = properties.OBJNAM;
+    if (typeof objectName === 'string' && objectName.trim()) labelParts.push(objectName.trim());
+    for (const attributeName of detailAttributes) {
+      const value = properties[attributeName];
+      if (value === undefined || value === null || value === '') continue;
+      const displayName: Record<string, string> = { SIGPER: 'period', SIGGRP: 'group', HEIGHT: 'height', VALNMR: 'range', COLOUR: 'colour', CATLIT: 'light' };
+      const suffix = attributeName === 'SIGPER' ? 's' : attributeName === 'HEIGHT' ? 'm' : '';
+      labelParts.push(displayName[attributeName] + ' ' + String(value) + suffix);
+    }
+    if (labelParts.length) properties.cm93DetailLabel = labelParts.join(' · ');
+    properties.cm93RelatedCount = group.length - 1;
+    primary.properties = properties;
   }
 
   return {
