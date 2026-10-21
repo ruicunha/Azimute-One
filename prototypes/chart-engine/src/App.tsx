@@ -6,7 +6,7 @@ import { unzipSync } from 'fflate';
 import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-catalog';
 import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
-import { decodeCm93Cell, parseCm93Dictionaries } from './cm93-decoder';
+import { parseCm93Cell, parseCm93Dictionaries } from './cm93-decoder';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -53,7 +53,7 @@ export default function App() {
   const [cmapVisible, setCmapVisible] = useState(false);
   const [cm93Summary, setCm93Summary] = useState<Cm93DatasetSummary | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
-  const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number } } | null>(null);
+  const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -274,17 +274,33 @@ export default function App() {
       const sample = cellFiles.slice(0, Math.min(12, cellFiles.length));
       const failures: string[] = [];
       let valid = 0;
-      let example: { name: string; headerLength: number; table1Length: number; table2Length: number } | undefined;
+      let features = 0;
+      let vectors = 0;
+      let vectorPoints = 0;
+      let example: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } | undefined;
       for (const file of sample) {
         try {
-          const header = decodeCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
+          const cell = parseCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
           valid++;
-          if (!example) example = { name: file.webkitRelativePath || file.name, headerLength: header.headerLength, table1Length: header.table1Length, table2Length: header.table2Length };
+          features += cell.features.length;
+          vectors += cell.vectors.length;
+          vectorPoints += cell.metadata.vectorPointCount;
+          if (!example) example = {
+            name: file.webkitRelativePath || file.name,
+            headerLength: cell.header.headerLength,
+            table1Length: cell.header.table1Length,
+            table2Length: cell.header.table2Length,
+            bounds: [cell.metadata.geographicBounds.west, cell.metadata.geographicBounds.south, cell.metadata.geographicBounds.east, cell.metadata.geographicBounds.north].join(', '),
+            vectorRecordCount: cell.metadata.vectorRecordCount,
+            vectorPointCount: cell.metadata.vectorPointCount,
+            point2dCount: cell.metadata.point2dCount,
+            featureCount: cell.metadata.featureCount,
+          };
         } catch (error) {
           failures.push((file.webkitRelativePath || file.name) + ': ' + (error instanceof Error ? error.message : 'header validation failed'));
         }
       }
-      const cellStats = { checked: sample.length, valid, failures, example };
+      const cellStats = { checked: sample.length, valid, features, vectors, vectorPoints, failures, example };
       setCm93CellStats(cellStats);
       setCm93DictionaryStats(dictionaryStats);
       setCm93Summary(summary);
@@ -363,8 +379,9 @@ export default function App() {
             {cm93Summary.warnings.length > 0 && <p>{cm93Summary.warnings.join(' ')}</p>}
             <p>Independent byte substitution and cell-header validation are implemented. A sample of up to 12 real cells is checked for consistent header and table boundaries. Geometry extraction and portrayal remain outstanding.</p>
             {cm93CellStats && <ul>
-              <li>Cell header checks: {cm93CellStats.valid}/{cm93CellStats.checked} passed</li>
-              {cm93CellStats.example && <li>Example {cm93CellStats.example.name}: header {cm93CellStats.example.headerLength} bytes, table 1 {cm93CellStats.example.table1Length.toLocaleString()} bytes, table 2 {cm93CellStats.example.table2Length.toLocaleString()} bytes</li>}
+              <li>Cell record parsing: {cm93CellStats.valid}/{cm93CellStats.checked} passed</li>
+              <li>Sample totals: {cm93CellStats.features.toLocaleString()} feature records · {cm93CellStats.vectors.toLocaleString()} vector records · {cm93CellStats.vectorPoints.toLocaleString()} vector points</li>
+              {cm93CellStats.example && <li>Example {cm93CellStats.example.name}: bounds [{cm93CellStats.example.bounds}], {cm93CellStats.example.featureCount} features, {cm93CellStats.example.vectorRecordCount} vectors / {cm93CellStats.example.vectorPointCount} points, {cm93CellStats.example.point2dCount} 2D points; header {cm93CellStats.example.headerLength} bytes, tables {cm93CellStats.example.table1Length.toLocaleString()} + {cm93CellStats.example.table2Length.toLocaleString()} bytes</li>}
               {cm93CellStats.failures.map((failure) => <li key={failure}>{failure}</li>)}
             </ul>}
           </div>}
