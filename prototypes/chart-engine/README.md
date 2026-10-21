@@ -42,9 +42,9 @@ https://ruicunha.github.io/Azimute-One/
 
 ## CM93 V2 support status
 
-The prototype currently recognizes and inventories an extracted CM93 V2 directory selected through the browser directory picker. It checks for `CM93OBJ.DIC`, `CM93ATTR.DIC`, `YYYYMMDD.EXD` edition markers, eight-digit region directories, and chart files under scale folders A–G. It reports file counts by scale and any missing structural elements.
+The prototype recognizes and inventories an extracted CM93 V2 directory selected through the browser directory picker. It checks for `CM93OBJ.DIC`, `CM93ATTR.DIC`, `YYYYMMDD.EXD` edition markers, eight-digit region directories, and chart files under scale folders A–G. It also parses the text dictionaries and reports the number of object classes and attribute definitions. The new independent `src/cm93-decoder.ts` module adds bounded little-endian binary readers and validated cell-relative-to-WGS84 coordinate conversion primitives.
 
-**This is dataset recognition only, not CM93 chart rendering.** CM93 V2 cell records use proprietary binary encoding. The browser renderer does not yet decode those records into geographic features or portray them on the map. That decoder and its coordinate/geometry validation are the next implementation step. The directory picker requires a browser that supports folder selection (typically Chromium-based browsers).
+**CM93 cell decoding and chart rendering are not complete yet.** The proprietary cell record framing and byte-substitution mapping have not been independently verified against the supplied dataset, so the decoder explicitly rejects raw cells rather than emitting invented or incorrectly positioned features. The next step is to reverse-engineer and validate the cell framing and mapping, then decode geometry and attributes before drawing CM93 features on the map. The directory picker requires a browser that supports folder selection (typically Chromium-based browsers).
 
 CM93 V2 is a legacy proprietary chart format. Confirm that you have the right to use, decode, and redistribute the chart data before deploying datasets or derived features.
 
