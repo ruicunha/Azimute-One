@@ -400,10 +400,9 @@ export function parseCm93Cell(bytes: Uint8Array, filename: string): Cm93ParsedCe
   const geographicValues = [lonMin, latMin, lonMax, latMax];
   const projectedValues = [eastingMin, northingMin, eastingMax, northingMax];
   if (!geographicValues.every(Number.isFinite) ||
-      Math.abs(lonMin) > 180 || Math.abs(lonMax) > 180 ||
+      Math.abs(lonMin) > 360 || Math.abs(lonMax) > 360 ||
       Math.abs(latMin) > 90 || Math.abs(latMax) > 90 ||
-      !projectedValues.every(Number.isFinite) ||
-      lonMin > lonMax || latMin > latMax) {
+      !projectedValues.every(Number.isFinite) || latMin > latMax) {
     throw new Cm93DecodeError(`Invalid coordinate bounds in CM93 cell ${filename}.`);
   }
 
@@ -537,8 +536,8 @@ export function parseCm93Cell(bytes: Uint8Array, filename: string): Cm93ParsedCe
       `CM93 feature table boundary mismatch in ${filename}: parsed to byte ${featureReader.offset}, expected ${table2End}.`,
     );
   }
-  if (actualAttributeBytes > attributeByteCount) {
-    throw new Cm93DecodeError(`Feature attributes exceed the CM93 header total in ${filename}.`);
+  if (actualAttributeBytes !== attributeByteCount) {
+    throw new Cm93DecodeError(`Feature attribute byte count mismatch in ${filename}: parsed ${actualAttributeBytes}, header declares ${attributeByteCount}.`);
   }
 
   return { header, metadata, vectors, points3d, points2d, features };
