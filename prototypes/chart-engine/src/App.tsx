@@ -291,7 +291,7 @@ export default function App() {
       setMessage(summary.isLikelyCm93V2
         ? 'CM93 V2 dataset recognized: ' + summary.regionCount + ' regions, ' + summary.fileCount.toLocaleString() + ' files. Cell headers validated: ' + valid + '/' + sample.length + '; ' + (dictionaryStats?.objects.toLocaleString() ?? 'unparsed') + ' object classes and ' + (dictionaryStats?.attributes.toLocaleString() ?? 'unparsed') + ' attributes.'
         : 'The selected directory does not look like a complete CM93 V2 dataset. Review the validation details below.');
-      setStatus(summary.isLikelyCm93V2 && valid === sample.length ? 'ready' : 'error');
+      setStatus(summary.isLikelyCm93V2 && sample.length > 0 && valid === sample.length ? 'ready' : 'error');
       setChartName(summary.isLikelyCm93V2 ? 'CM93 V2 — ' + summary.rootName : 'Unrecognized CM93 dataset');
       setSource('CM93 V2 directory');
       setFeatureCount(null);
