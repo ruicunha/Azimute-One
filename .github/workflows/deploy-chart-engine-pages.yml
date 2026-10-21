@@ -65,6 +65,21 @@ jobs:
             --output prototypes/chart-engine/public/sample-chart-new-york-harbor.zip
           unzip -t prototypes/chart-engine/public/sample-chart-new-york-harbor.zip
 
+      - name: Download optional MBTiles raster chart
+        env:
+          CMAP_MBTILES_URL: ${{ secrets.CMAP_MBTILES_URL }}
+        run: |
+          if [ -z "$CMAP_MBTILES_URL" ]; then
+            echo "CMAP_MBTILES_URL is not configured; skipping optional raster chart."
+            exit 0
+          fi
+          curl --fail --location --retry 3 --silent --show-error \
+            "$CMAP_MBTILES_URL" \
+            --output /tmp/cmap-raster-chart.zip
+          python3 prototypes/chart-engine/scripts/mbtiles_to_tiles.py \
+            /tmp/cmap-raster-chart.zip \
+            prototypes/chart-engine/public/cmap-tiles
+
       - name: Build site
         working-directory: prototypes/chart-engine
         run: npm run build -- --base=/Azimute-One/
