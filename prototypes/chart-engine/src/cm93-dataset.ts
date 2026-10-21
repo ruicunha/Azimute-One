@@ -40,12 +40,12 @@ export function inspectCm93Files(files: FileList | File[]): Cm93DatasetSummary {
 
   const regionIds = [...new Set(relativePaths
     .map((path) => path.split('/')[0])
-    .filter((segment) => /^\\d{8}$/.test(segment)))].sort();
+    .filter((segment) => /^\d{8}$/.test(segment)))].sort();
 
   const scaleCounts = new Map<string, number>([['Z', 0], ...'ABCDEFG'.split('').map((code) => [code, 0] as [string, number])]);
   for (const path of relativePaths) {
     const parts = path.split('/');
-    const regionIndex = parts.findIndex((part) => /^\\d{8}$/.test(part));
+    const regionIndex = parts.findIndex((part) => /^\d{8}$/.test(part));
     if (regionIndex < 0) continue;
     const scale = parts[regionIndex + 1]?.toUpperCase();
     if (scale && scaleCounts.has(scale) && parts.length > regionIndex + 2) {
@@ -54,11 +54,11 @@ export function inspectCm93Files(files: FileList | File[]): Cm93DatasetSummary {
   }
 
   const editionDates = [...new Set(relativePaths
-    .map((path) => path.match(/(?:^|\\/)(\\d{8})\\.exd$/i)?.[1])
+    .map((path) => path.match(/(?:^|\/)(\d{8})\.exd$/i)?.[1])
     .filter((date): date is string => Boolean(date)))].sort();
 
-  const hasObjectDictionary = relativePaths.some((path) => /(?:^|\\/)cm93obj\\.dic$/i.test(path));
-  const hasAttributeDictionary = relativePaths.some((path) => /(?:^|\\/)cm93attr\\.dic$/i.test(path));
+  const hasObjectDictionary = relativePaths.some((path) => /(?:^|\/)cm93obj\.dic$/i.test(path));
+  const hasAttributeDictionary = relativePaths.some((path) => /(?:^|\/)cm93attr\.dic$/i.test(path));
   const populatedScales = [...scaleCounts.entries()].filter(([, count]) => count > 0);
   const isLikelyCm93V2 = regionIds.length > 0 && editionDates.length > 0 &&
     hasObjectDictionary && hasAttributeDictionary && populatedScales.length > 0;
