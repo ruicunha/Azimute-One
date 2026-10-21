@@ -143,7 +143,7 @@ function cm93CellFootprint(sourceCell: string): Cm93CellFootprint | null {
   if (!match) return null;
   const latitudeCell = Number(match[1]) - 30;
   const longitudeCell = Number(match[2]);
-  const scale = match[3] as Cm93ScaleCode;
+  const scale = match[3].toUpperCase() as Cm93ScaleCode;
   const step = CM93_SCALE_STEPS[scale];
   return {
     south: latitudeCell,
