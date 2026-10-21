@@ -7,7 +7,7 @@ import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-c
 import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
 import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
-import { mergeCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt';
+import { clipCm93FeaturesToBounds, mergeCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -748,10 +748,68 @@ export default function App() {
     let failed = 0;
     let decoded = 0;
     let emptyCells = 0;
+    let fallbackGroups = 0;
     const failedCellNames: string[] = [];
 
-    for (let index = 0; index < selection.files.length; index++) {
+    // Resolve every target-scale footprint independently. If its target cell
+    // is absent, fails to decode, or has no usable features, try the next
+    // coarser candidate until one actually supplies data.
+    for (let groupIndex = 0; groupIndex < selection.candidateGroups.length; groupIndex++) {
       if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
+      const group = selection.candidateGroups[groupIndex];
+      let groupResolved = false;
+
+      for (let candidateIndex = 0; candidateIndex < group.candidates.length; candidateIndex++) {
+        const candidate = group.candidates[candidateIndex];
+        const file = candidate.file;
+        const key = (file.webkitRelativePath || file.name).toLowerCase();
+        let cellFeatures = cm93DecodedCacheRef.current.get(key);
+
+        if (!cellFeatures) {
+          try {
+            const cell = parseCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
+            cellFeatures = cm93CellToGeoJSON(cell, dictionary).geojson.features;
+            cm93DecodedCacheRef.current.set(key, cellFeatures);
+            decoded++;
+            while (cm93DecodedCacheRef.current.size > 240) {
+              const oldest = cm93DecodedCacheRef.current.keys().next().value;
+              if (oldest === undefined) break;
+              cm93DecodedCacheRef.current.delete(oldest);
+            }
+          } catch {
+            failed++;
+            failedCellNames.push(file.name);
+            continue;
+          }
+        }
+
+        if (!cellFeatures || cellFeatures.length === 0) {
+          emptyCells++;
+          continue;
+        }
+
+        let usable = cellFeatures.map((feature) => ({
+          ...feature,
+          properties: { ...(feature.properties ?? {}), cm93SourceCell: key, cm93SourceScale: candidate.scale },
+        }));
+        if (candidateIndex > 0) {
+          usable = clipCm93FeaturesToBounds(usable, group.bounds) as typeof usable;
+        }
+        if (usable.length === 0) continue;
+
+        features.push(...usable);
+        groupResolved = true;
+        if (candidateIndex > 0) fallbackGroups++;
+        break;
+      }
+
+      // An unresolved group intentionally contributes no chart features.
+      // Crucially, we never keep stale features from the previous zoom.
+      if ((groupIndex + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      void groupResolved;
+    }
+
+    if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
       const file = selection.files[index];
       const key = (file.webkitRelativePath || file.name).toLowerCase();
       let cellFeatures = cm93DecodedCacheRef.current.get(key);
