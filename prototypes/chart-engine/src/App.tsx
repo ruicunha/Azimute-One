@@ -314,7 +314,13 @@ export default function App() {
       cm93DecodedCacheRef.current.clear();
       cm93OverviewScaleRef.current = null;
       setCm93QuiltStats(null);
-      if (mapRef.current) clearCm93Quilt(mapRef.current);
+      if (mapRef.current) {
+        clearCm93Quilt(mapRef.current);
+        for (const layerId of ['cm93-cell-labels', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
+          if (mapRef.current.getLayer(layerId)) mapRef.current.removeLayer(layerId);
+        }
+        if (mapRef.current.getSource('cm93-active-cell')) mapRef.current.removeSource('cm93-active-cell');
+      }
       cm93FilesRef.current = fileList;
       const findTextFile = async (name: string) => {
         const file = fileList.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase());
@@ -646,6 +652,7 @@ export default function App() {
           continue;
         }
       }
+      if (!cellFeatures) continue;
       features.push(...cellFeatures);
       // Yield periodically so the UI can respond while a viewport quilt is built.
       if ((index + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
