@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, cm93GridPointToWgs84, parseCm93Dictionaries } from './cm93-decoder.ts';
+import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, cm93CellToGeoJSON, cm93GridPointToWgs84, parseCm93Dictionaries } from './cm93-decoder.ts';
 
 const firstCellHeader = Uint8Array.from([
   0x48, 0xc5, 0x49, 0x73, 0xc5, 0xc5, 0x74, 0x40, 0xc5, 0xc5,
@@ -93,4 +93,63 @@ test('converts CM93 16-bit grid endpoints using the cell Mercator bounds', () =>
   assert.ok(Math.abs(southwest[1] - (-60)) < 1e-6);
   assert.ok(Math.abs(northeast[0] - 20) < 1e-6);
   assert.ok(Math.abs(northeast[1] - (-40)) < 1e-6);
+});
+
+test('assembles decoded CM93 point features and typed attributes into GeoJSON', () => {
+  const dictionary = parseCm93Dictionaries(
+    'BCNLAT|7|P|8|Beacon, lateral|OBJNAM',
+    'CPDATE|150|aSTRING',
+  );
+  const rawAttributes = Uint8Array.from([150, ...new TextEncoder().encode('20050629'), 0]);
+  const cell = {
+    header: {
+      fileSize: 2752,
+      headerLength: 138,
+      table1Length: 1826,
+      table2Length: 788,
+      table1Offset: 138,
+      table2Offset: 1964,
+      decodedHeader: new Uint8Array(138),
+    },
+    metadata: {
+      geographicBounds: { west: 0, south: -60, east: 20, north: -40 },
+      projectedBounds: {
+        west: 0,
+        south: -8400068.5658788,
+        east: 2226477.4513319735,
+        north: -4866133.821880401,
+      },
+      vectorRecordCount: 0,
+      vectorPointCount: 0,
+      point3dRecordCount: 0,
+      point3dPointCount: 0,
+      point2dCount: 1,
+      featureCount: 1,
+      relatedObjectPointerCount: 0,
+      attributeByteCount: rawAttributes.length,
+    },
+    vectors: [],
+    points3d: [],
+    points2d: [[32767, 32767]],
+    features: [{
+      objectCode: 7,
+      geometryType: 0x81,
+      descriptorLength: 16,
+      geometry: { kind: 'point', index: 0 },
+      relatedObjectIndexes: [],
+      attributeCount: 1,
+      rawAttributes,
+    }],
+  };
+  const result = cm93CellToGeoJSON(cell, dictionary);
+  assert.equal(result.geojson.features.length, 1);
+  assert.equal(result.omittedGeometryCount, 0);
+  assert.equal(result.geojson.features[0].properties?.cm93Class, 'BCNLAT');
+  assert.equal(result.geojson.features[0].properties?.CPDATE, '20050629');
+  assert.equal(result.geojson.features[0].geometry?.type, 'Point');
+  const coordinates = result.geojson.features[0].geometry?.type === 'Point'
+    ? result.geojson.features[0].geometry.coordinates
+    : [];
+  assert.ok(Math.abs(coordinates[0] - 10) < 1e-3);
+  assert.ok(Math.abs(coordinates[1] - (-50)) < 1e-3);
 });
