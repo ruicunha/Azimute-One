@@ -7,7 +7,6 @@ MapLibre's {z}/{x}/{y}.png URL template. Uses only the Python standard library.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sqlite3
 import sys
@@ -67,7 +66,7 @@ def main() -> None:
                     return x / n * 360.0 - 180.0
                 def lat(y_xyz: int) -> float:
                     return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y_xyz / n))))
-                bounds = [lon(min_x), lat(n - 1 - max_y), lon(max_x + 1), lat(n - 1 - min_y)]
+                bounds = [lon(min_x), lat(n - min_y), lon(max_x + 1), lat(n - 1 - max_y)]
 
             # Keep the public tile directory clean when regenerating it.
             for item in output.iterdir():
