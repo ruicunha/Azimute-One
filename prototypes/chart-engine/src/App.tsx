@@ -52,7 +52,7 @@ function findCm93CellForPosition(files: File[], latitude: number, longitude: num
   const longitudeUnits = normalizedLongitude * 3;
   const latitudeUnits = latitude * 3 + 240;
   const lookup = new Map(files.map((file) => [
-    (file.webkitRelativePath || file.name).replace(/\\\\/g, '/').toLowerCase(),
+    (file.webkitRelativePath || file.name).toLowerCase(),
     file,
   ]));
   for (const scale of scales) {
