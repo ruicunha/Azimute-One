@@ -807,7 +807,7 @@ export function cm93CellToGeoJSON(cell: Cm93ParsedCell, dictionary: Cm93Dictiona
       // Only closed rings are safe to fill. Open or disconnected fragments are
       // omitted instead of being implicitly closed into misleading polygons.
       const rings = assembleCm93VectorPaths(cell.vectors, record.geometry.vectors);
-      const polygons = cm93RingsToPolygonCoordinates(rings).map((polygon) => polygon.map(toCoordinates));
+      const polygons = cm93RingsToPolygonCoordinates(rings).map((polygon) => polygon.map((ring) => toCoordinates(ring as Array<[number, number]>)));
       if (polygons.length === 1) {
         geometry = { type: 'Polygon', coordinates: polygons[0] };
       } else if (polygons.length > 1) {
