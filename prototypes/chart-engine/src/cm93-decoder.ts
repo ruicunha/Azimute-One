@@ -4,9 +4,8 @@
  * This module deliberately contains no code or lookup tables copied from
  * GPL-licensed implementations. It parses the published text dictionaries,
  * provides bounded binary reads, and converts already-decoded CM93 coordinate
- * deltas into WGS84. The proprietary cell record framing and byte-substitution
- * permutation are not yet independently established; raw encrypted cells are
- * therefore rejected instead of being misrepresented as decoded features.
+ * deltas into WGS84. The byte-substitution permutation is recovered from
+ * cell-header length constraints; feature record decoding is a separate stage.
  */
 
 const CM93_DECODE_MAP = new Uint8Array([
@@ -248,43 +247,57 @@ export type Cm93CellHeader = {
   decodedHeader: Uint8Array;
 };
 
-/**
- * Decode the CM93 byte substitution and validate the cell's length header.
- * The 256-byte permutation was recovered independently by solving the
- * header-length constraints across the supplied CM93 V2 cell corpus; it was
- * not copied from another decoder implementation.
- */
-export function decodeCm93Cell(bytes: Uint8Array, filename: string): Cm93CellHeader {
+function validateCellFilename(filename: string): void {
   const extension = filename.split('.').pop()?.toUpperCase();
   if (!extension || !/^[A-GZ]$/.test(extension)) {
     throw new Cm93DecodeError('Select a CM93 V2 cell file with an A–G or Z scale extension.');
   }
-  if (bytes.byteLength < 10) throw new Cm93DecodeError('CM93 cell is too short to contain its length header.');
+}
 
-  const decoded = new Uint8Array(bytes.length);
-  for (let i = 0; i < bytes.length; i++) decoded[i] = CM93_DECODE_MAP[bytes[i]];
+/**
+ * Decode just the ten-byte length header. Accepting the known file size
+ * separately makes this useful for corpus validation without retaining every
+ * full chart cell in memory.
+ */
+export function decodeCm93CellHeader(
+  encodedHeader: Uint8Array,
+  fileSize: number,
+  filename: string,
+): Cm93CellHeader {
+  validateCellFilename(filename);
+  if (encodedHeader.byteLength < 10) throw new Cm93DecodeError('CM93 cell is too short to contain its length header.');
+  if (!Number.isSafeInteger(fileSize) || fileSize < 10) throw new Cm93DecodeError('Invalid CM93 cell file size.');
 
+  const decoded = new Uint8Array(10);
+  for (let i = 0; i < 10; i++) decoded[i] = CM93_DECODE_MAP[encodedHeader[i]];
   const reader = new Cm93BinaryReader(decoded);
   const headerLength = reader.readUint16LE();
   const table1Length = reader.readUint32LE();
   const table2Length = reader.readUint32LE();
-  if (headerLength < 10 || headerLength > bytes.length) {
+  if (headerLength < 10 || headerLength > fileSize) {
     throw new Cm93DecodeError(`Invalid CM93 header length ${headerLength} in ${filename}.`);
   }
-  if (table1Length < 0 || table2Length < 0 ||
-      headerLength + table1Length + table2Length !== bytes.length) {
+  if (headerLength + table1Length + table2Length !== fileSize) {
     throw new Cm93DecodeError(
-      `CM93 cell length mismatch in ${filename}: header ${headerLength} + table 1 ${table1Length} + table 2 ${table2Length} != file size ${bytes.length}.`,
+      `CM93 cell length mismatch in ${filename}: header ${headerLength} + table 1 ${table1Length} + table 2 ${table2Length} != file size ${fileSize}.`,
     );
   }
 
   return {
-    fileSize: bytes.length,
+    fileSize,
     headerLength,
     table1Length,
     table2Length,
     table1Offset: headerLength,
     table2Offset: headerLength + table1Length,
-    decodedHeader: decoded.slice(0, headerLength),
+    decodedHeader: decoded,
   };
+}
+
+/** Decode a complete cell and validate its header and table boundaries. */
+export function decodeCm93Cell(bytes: Uint8Array, filename: string): Cm93CellHeader {
+  const header = decodeCm93CellHeader(bytes.subarray(0, 10), bytes.byteLength, filename);
+  const decoded = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) decoded[i] = CM93_DECODE_MAP[bytes[i]];
+  return { ...header, decodedHeader: decoded.slice(0, header.headerLength) };
 }
