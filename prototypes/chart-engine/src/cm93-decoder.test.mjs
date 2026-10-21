@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, assembleCm93VectorPaths, cm93CellToGeoJSON, cm93RingsToPolygonCoordinates, cm93GridPointToWgs84, parseCm93Dictionaries } from './cm93-decoder.ts';
+import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, assembleCm93VectorPaths, cm93CellToGeoJSON, cm93RingsToPolygonCoordinates, cm93RelatedObjectPriority, cm93GridPointToWgs84, parseCm93Dictionaries } from './cm93-decoder.ts';
 
 const firstCellHeader = Uint8Array.from([
   0x48, 0xc5, 0x49, 0x73, 0xc5, 0xc5, 0x74, 0x40, 0xc5, 0xc5,
@@ -215,4 +215,11 @@ test('keeps an island nested inside a hole as a separate polygon', () => {
   assert.equal(polygons.length, 2);
   assert.equal(polygons[0].length, 2);
   assert.equal(polygons[1].length, 1);
+});
+
+
+test('related light records take priority over buoy and beacon names', () => {
+  assert.ok(cm93RelatedObjectPriority('LIGHTS') > cm93RelatedObjectPriority('BOYLAT'));
+  assert.ok(cm93RelatedObjectPriority('LIGHTS') > cm93RelatedObjectPriority('BCNLAT'));
+  assert.ok(cm93RelatedObjectPriority('BCNLAT') > cm93RelatedObjectPriority('BOYLAT'));
 });
