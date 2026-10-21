@@ -690,6 +690,82 @@ export function cm93GridPointToWgs84(
 }
 
 
+/**
+ * Convert closed area rings into GeoJSON polygons using containment rather
+ * than treating every ring as an independent filled area. CM93 area records
+ * may contain outer boundaries and interior holes in the same record.
+ */
+export function cm93RingsToPolygonCoordinates(
+  inputRings: Array<Array<[number, number]>>,
+): GeoJSON.Position[][][] {
+  const rings = inputRings.filter((ring) => {
+    if (ring.length < 4) return false;
+    const first = ring[0];
+    const last = ring[ring.length - 1];
+    return first[0] === last[0] && first[1] === last[1];
+  }).map((coordinates) => ({
+    coordinates: coordinates as GeoJSON.Position[],
+    area: Math.abs(coordinates.reduce((sum, point, index) => {
+      const next = coordinates[(index + 1) % coordinates.length];
+      return sum + point[0] * next[1] - next[0] * point[1];
+    }, 0) / 2),
+    parent: -1,
+    depth: 0,
+  })).filter((ring) => ring.area > 0);
+
+  const contains = (ring: GeoJSON.Position[], point: [number, number]): boolean => {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const a = ring[i];
+      const b = ring[j];
+      const crosses = ((a[1] > point[1]) !== (b[1] > point[1])) &&
+        (point[0] < ((b[0] - a[0]) * (point[1] - a[1]) / (b[1] - a[1]) + a[0]));
+      if (crosses) inside = !inside;
+    }
+    return inside;
+  };
+
+  // A ring's first vertex is on its own boundary, but should lie strictly
+  // inside any enclosing ring. Choose the smallest enclosing ring as parent.
+  for (let i = 0; i < rings.length; i++) {
+    const point = rings[i].coordinates[0] as [number, number];
+    let parent = -1;
+    let parentArea = Infinity;
+    for (let j = 0; j < rings.length; j++) {
+      if (i === j || rings[j].area <= rings[i].area) continue;
+      if (rings[j].area < parentArea && contains(rings[j].coordinates, point)) {
+        parent = j;
+        parentArea = rings[j].area;
+      }
+    }
+    rings[i].parent = parent;
+  }
+
+  const depthOf = (index: number, visiting = new Set<number>()): number => {
+    if (rings[index].parent < 0) return 0;
+    if (visiting.has(index)) return 0;
+    visiting.add(index);
+    return 1 + depthOf(rings[index].parent, visiting);
+  };
+  rings.forEach((ring, index) => { ring.depth = depthOf(index); });
+
+  const polygons: GeoJSON.Position[][][] = [];
+  const outerPolygonIndex = new Map<number, number>();
+  for (let i = 0; i < rings.length; i++) {
+    if (rings[i].depth % 2 !== 0) continue;
+    outerPolygonIndex.set(i, polygons.length);
+    polygons.push([rings[i].coordinates]);
+  }
+  for (let i = 0; i < rings.length; i++) {
+    if (rings[i].depth % 2 === 0) continue;
+    let ancestor = rings[i].parent;
+    while (ancestor >= 0 && rings[ancestor].depth % 2 !== 0) ancestor = rings[ancestor].parent;
+    const polygonIndex = ancestor >= 0 ? outerPolygonIndex.get(ancestor) : undefined;
+    if (polygonIndex !== undefined) polygons[polygonIndex].push(rings[i].coordinates);
+  }
+  return polygons;
+}
+
 export type Cm93GeoJsonResult = {
   geojson: GeoJSON.FeatureCollection;
   omittedGeometryCount: number;
@@ -730,21 +806,12 @@ export function cm93CellToGeoJSON(cell: Cm93ParsedCell, dictionary: Cm93Dictiona
     } else if (record.geometry.kind === 'area') {
       // Only closed rings are safe to fill. Open or disconnected fragments are
       // omitted instead of being implicitly closed into misleading polygons.
-      const rings = assembleCm93VectorPaths(cell.vectors, record.geometry.vectors).filter((path) => {
-        if (path.length < 4) return false;
-        const first = path[0];
-        const last = path[path.length - 1];
-        return first[0] === last[0] && first[1] === last[1];
-      });
-      if (rings.length === 1) {
-        geometry = { type: 'Polygon', coordinates: [toCoordinates(rings[0])] };
-      } else if (rings.length > 1) {
-        // Until ring containment/orientation is decoded, do not guess which
-        // rings are holes. Preserve each closed ring as a separate polygon.
-        geometry = {
-          type: 'MultiPolygon',
-          coordinates: rings.map((ring) => [toCoordinates(ring)]),
-        };
+      const rings = assembleCm93VectorPaths(cell.vectors, record.geometry.vectors);
+      const polygons = cm93RingsToPolygonCoordinates(rings).map((polygon) => polygon.map((ring) => toCoordinates(ring as Array<[number, number]>)));
+      if (polygons.length === 1) {
+        geometry = { type: 'Polygon', coordinates: polygons[0] };
+      } else if (polygons.length > 1) {
+        geometry = { type: 'MultiPolygon', coordinates: polygons };
       }
     }
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, assembleCm93VectorPaths, cm93CellToGeoJSON, cm93GridPointToWgs84, parseCm93Dictionaries } from './cm93-decoder.ts';
+import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, assembleCm93VectorPaths, cm93CellToGeoJSON, cm93RingsToPolygonCoordinates, cm93GridPointToWgs84, parseCm93Dictionaries } from './cm93-decoder.ts';
 
 const firstCellHeader = Uint8Array.from([
   0x48, 0xc5, 0x49, 0x73, 0xc5, 0xc5, 0x74, 0x40, 0xc5, 0xc5,
@@ -196,4 +196,23 @@ test('does not invent a bridge between separated vector endpoints', () => {
   assert.equal(paths.length, 2);
   assert.equal(paths[0].at(-1)?.[0], 1);
   assert.equal(paths[1][0][0], 3);
+});
+
+
+test('preserves holes in CM93 area rings instead of filling them as separate polygons', () => {
+  const outer = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]];
+  const hole = [[2, 2], [2, 8], [8, 8], [8, 2], [2, 2]];
+  const polygons = cm93RingsToPolygonCoordinates([outer, hole]);
+  assert.equal(polygons.length, 1);
+  assert.equal(polygons[0].length, 2, 'outer boundary and interior hole should share one polygon');
+});
+
+test('keeps an island nested inside a hole as a separate polygon', () => {
+  const outer = [[0, 0], [20, 0], [20, 20], [0, 20], [0, 0]];
+  const hole = [[2, 2], [2, 18], [18, 18], [18, 2], [2, 2]];
+  const island = [[5, 5], [15, 5], [15, 15], [5, 15], [5, 5]];
+  const polygons = cm93RingsToPolygonCoordinates([outer, hole, island]);
+  assert.equal(polygons.length, 2);
+  assert.equal(polygons[0].length, 2);
+  assert.equal(polygons[1].length, 1);
 });
