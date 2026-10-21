@@ -610,6 +610,7 @@ export default function App() {
     if (overviewIndex >= 0 && scaleIndex <= overviewIndex) {
       clearCm93Quilt(map);
       setCm93QuiltStats(null);
+      setStatus('ready');
       setMessage('Automatic CM93 detail is enabled. The overview already covers scale ' + selection.scale + '. Zoom in for finer cells.');
       return;
     }
@@ -617,6 +618,7 @@ export default function App() {
     if (selection.files.length === 0) {
       clearCm93Quilt(map);
       setCm93QuiltStats({ scale: selection.scale, cells: 0, features: 0, cached: cm93DecodedCacheRef.current.size, failed: 0 });
+      setStatus('ready');
       setMessage('Automatic CM93 detail: no ' + selection.scale + '-scale cells cover this viewport. The overview remains visible.');
       return;
     }
