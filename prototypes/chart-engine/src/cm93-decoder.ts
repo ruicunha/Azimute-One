@@ -542,3 +542,84 @@ export function parseCm93Cell(bytes: Uint8Array, filename: string): Cm93ParsedCe
 
   return { header, metadata, vectors, points3d, points2d, features };
 }
+
+
+export type Cm93DecodedAttribute = {
+  code: number;
+  name: string | null;
+  value: string | number | number[] | null;
+  valueType: string | null;
+  supported: boolean;
+};
+
+/** Decode the common CM93 attribute encodings using the selected cell's dictionary. */
+export function decodeCm93FeatureAttributes(
+  rawAttributes: Uint8Array,
+  attributeCount: number,
+  dictionary: Cm93Dictionary,
+): Cm93DecodedAttribute[] {
+  checkedCount(attributeCount, 'feature attribute', 255);
+  const reader = new Cm93BinaryReader(rawAttributes);
+  const attributes: Cm93DecodedAttribute[] = [];
+  const readCString = (): string => {
+    const bytes: number[] = [];
+    while (reader.remaining > 0) {
+      const value = reader.readUint8();
+      if (value === 0) return new TextDecoder().decode(Uint8Array.from(bytes));
+      bytes.push(value);
+    }
+    throw new Cm93DecodeError('CM93 string attribute is missing its null terminator.');
+  };
+
+  for (let index = 0; index < attributeCount; index++) {
+    if (reader.remaining < 1) {
+      throw new Cm93DecodeError(`CM93 attribute block ended before attribute ${index + 1} of ${attributeCount}.`);
+    }
+    const code = reader.readUint8();
+    const definition = dictionary.attributesByCode.get(code);
+    if (!definition) {
+      attributes.push({ code, name: null, value: null, valueType: null, supported: false });
+      break; // Unknown value width means later attribute boundaries cannot be trusted.
+    }
+
+    let value: string | number | number[] | null;
+    let supported = true;
+    switch (definition.valueType) {
+      case 'aSTRING':
+        value = readCString();
+        break;
+      case 'aBYTE':
+        value = reader.readUint8();
+        break;
+      case 'aLIST': {
+        const length = reader.readUint8();
+        if (length > reader.remaining) throw new Cm93DecodeError(`CM93 list attribute ${definition.name} exceeds its record boundary.`);
+        const values: number[] = [];
+        for (let item = 0; item < length; item++) values.push(reader.readUint8());
+        value = values;
+        break;
+      }
+      case 'aWORD10':
+        value = reader.readUint16LE() / 10;
+        break;
+      case 'aFLOAT':
+        value = reader.readFloat32LE();
+        break;
+      case 'aLONG':
+        value = reader.readInt32LE();
+        break;
+      case 'aCMPLX':
+        reader.readBytes(3); // CM93 complex values carry a three-byte prefix.
+        value = readCString();
+        break;
+      case 'aNotUsed':
+      default:
+        value = null;
+        supported = false;
+        attributes.push({ code, name: definition.name, value, valueType: definition.valueType, supported });
+        return attributes; // Do not guess the width of an unsupported value.
+    }
+    attributes.push({ code, name: definition.name, value, valueType: definition.valueType, supported });
+  }
+  return attributes;
+}
