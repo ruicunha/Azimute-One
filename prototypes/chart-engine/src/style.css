@@ -92,3 +92,13 @@ h1 { margin: 0; color: #16313b; font-size: 25px; letter-spacing: -.04em; }
   .source-label { max-width: 44%; }
   .map-footer { font-size: 9px; }
 }
+
+/* CM93 point controls and acronym glossary */
+.cm93-type-row { display: grid; grid-template-columns: 14px 18px minmax(0, 1fr); align-items: start; gap: 7px; cursor: pointer; }
+.cm93-type-row input { margin: 2px 0 0; }
+.cm93-type-icon { color: #397d99; font-size: 15px; line-height: 1.1; text-align: center; }
+.cm93-type-row strong { display: block; color: #294f5a; font-size: 11px; letter-spacing: .02em; }
+.cm93-type-row small { display: block; margin-top: 2px; color: #71868a; font-size: 10px; line-height: 1.4; }
+.cm93-glossary { margin-top: 17px; padding-top: 12px; border-top: 1px solid #e0e8e7; }
+.cm93-glossary p { margin: 7px 0; color: #667c80; font-size: 10px; line-height: 1.45; }
+.cm93-glossary p strong { color: #365a65; font-size: 10px; }
