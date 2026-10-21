@@ -68,3 +68,24 @@ test('limits the number of selected cells for large viewports', () => {
   }, 14, 12);
   assert.equal(result.files.length, 0);
 });
+
+
+test('does not truncate a detailed viewport at the old 180-cell limit', () => {
+  const files = [];
+  for (let latitudeCell = 240; latitudeCell <= 258; latitudeCell++) {
+    for (let longitudeCell = 0; longitudeCell <= 18; longitudeCell++) {
+      const cellLatitude = latitudeCell + 30;
+      const rootLatitude = Math.floor((cellLatitude - 30) / 60) * 60 + 30;
+      const rootLongitude = Math.floor(longitudeCell / 60) * 60;
+      const root = String(rootLatitude).padStart(4, '0') + String(rootLongitude).padStart(4, '0');
+      const filename = String(cellLatitude).padStart(4, '0') + String(longitudeCell).padStart(4, '0') + '.g';
+      files.push(cell('G', filename, `cm93/${root}/g/${filename}`));
+    }
+  }
+  const result = selectCm93ViewportCells(files, {
+    west: 0, south: 0, east: 6, north: 6,
+  }, 14, 1200);
+
+  assert.equal(result.files.length, 361);
+  assert.equal(result.scaleCounts.G, 361);
+});
