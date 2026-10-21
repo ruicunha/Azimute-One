@@ -451,193 +451,30 @@ export default function App() {
       return;
     }
 
-    // Render only the coarsest scale available for a useful whole-dataset
-    // overview. Rendering every scale together would duplicate features and
-    // create an unnecessarily large GeoJSON source.
+    // Use one coarse scale for the initial whole-dataset test. Combining all
+    // scales would duplicate features and create a much larger map source.
     const scaleOrder = ['Z', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
-    const allCellFiles = cm93FilesRef.current.filter((file) =>
-      /(?:^|\\/)\d{8}\\/[A-GZ]\\/[^/]+\\.[A-GZ]$/i.test(file.webkitRelativePath || file.name),
-    );
-    const scale = scaleOrder.find((code) => allCellFiles.some((file) =>
-      new RegExp('(?:^|/)' + code + '/[^/]+\\\\.' + code + '
-    const map = mapRef.current;
-    if (!map || !cmapMetadata || !map.getLayer('cmap-raster-layer')) return;
-    const nextVisible = !cmapVisible;
-    map.setLayoutProperty('cmap-raster-layer', 'visibility', nextVisible ? 'visible' : 'none');
-    setCmapVisible(nextVisible);
-    if (nextVisible) {
-      const [west, south, east, north] = cmapMetadata.bounds;
-      map.fitBounds([[west, south], [east, north]], { padding: 36, maxZoom: 9, duration: 700 });
-      setChartName(cmapMetadata.name || 'Portugal raster chart');
-      setSource('MBTiles raster chart');
-      setMessage('Raster chart tiles loaded from the optional MBTiles dataset.');
-      setStatus('ready');
-    } else {
-      setMessage('Raster chart hidden. Vector ENC selection remains active.');
-    }
-  };
-
-  return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="brand-mark">A</div>
-        <div className="brand-copy"><strong>AZIMUTE ONE</strong><span>CHART ENGINE LAB</span></div>
-        <div className="topbar-spacer" />
-        <span className="environment-pill">PHASE 0 · PROTOTYPE</span>
-      </header>
-      <section className="workspace">
-        <aside className="sidebar">
-          <p className="eyebrow">VECTOR ENC EXPERIMENT</p>
-          <h1>Chart rendering</h1>
-          <p className="intro">A data-driven chart collection. The engine chooses a reference chart by display scale, plans a coarse coverage quilt with fallback charts, loads the required cells, and unloads cells that are no longer relevant.</p>
-          <div className="status-card">
-            <div className={`status-dot ${status}`} />
-            <div><strong>{status === 'ready' ? 'Chart loaded' : status === 'error' ? 'Load failed' : status === 'loading' ? 'Loading chart' : 'Overview ready'}</strong><p>{message}</p></div>
-          </div>
-          <div className="metric-grid">
-            <div className="metric"><span>VISIBLE CHARTS</span><strong>{selectedCharts.length}</strong></div>
-            <div className="metric"><span>FEATURES</span><strong>{featureCount === null ? '—' : featureCount.toLocaleString()}</strong></div>
-          </div>
-          <div className="legend">
-            <span className="field-label">CATALOGUE MATCHES</span>
-            {selectedCharts.length ? <ul>{selectedCharts.map((title) => <li key={title}>{title}</li>)}</ul> : <p>No chart currently matches this viewport.</p>}
-          </div>
-          <label className="file-button"><span>Load ENC file</span><input type="file" accept=".000,.zip,application/zip,application/octet-stream" onChange={(event) => void onFile(event.target.files?.[0])} /></label>
-          <label className="file-button"><span>Inspect CM93 V2 directory</span><input ref={cm93DirectoryInput} type="file" multiple onChange={(event) => onCm93Directory(event.target.files)} /></label>
-          {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93CellAtMapCenter()}>Render CM93 cell at map centre</button>}
-          {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93Overview()}>Render CM93 dataset overview</button>}
-          {cm93Summary && <div className="legend cm93-summary">
-            <span className="field-label">CM93 DATASET INVENTORY</span>
-            <ul>
-              <li>{cm93Summary.isLikelyCm93V2 ? 'CM93 V2 structure recognized' : 'CM93 V2 structure not fully recognized'}</li>
-              <li>{cm93Summary.fileCount.toLocaleString()} files · {cm93Summary.regionCount} region folders</li>
-              <li>Edition marker(s): {cm93Summary.editionDates.length ? cm93Summary.editionDates.join(', ') : 'not found'}</li>
-              <li>Scales: {cm93Summary.scales.map((scale) => `${scale.code} (${scale.fileCount.toLocaleString()} files)`).join(', ') || 'none found'}</li>
-              <li>Object dictionary: {cm93Summary.hasObjectDictionary ? 'found' : 'missing'}</li>
-              <li>Attribute dictionary: {cm93Summary.hasAttributeDictionary ? 'found' : 'missing'}</li>
-              {cm93DictionaryStats && <li>Parsed dictionaries: {cm93DictionaryStats.objects.toLocaleString()} object classes · {cm93DictionaryStats.attributes.toLocaleString()} attributes</li>}
-            </ul>
-            {cm93Summary.warnings.length > 0 && <p>{cm93Summary.warnings.join(' ')}</p>}
-            <p>Independent byte substitution and cell-header validation are implemented. A sample of up to 12 real cells is checked for consistent header and table boundaries. Geometry extraction and portrayal remain outstanding.</p>
-            {cm93CellStats && <ul>
-              <li>Cell record parsing: {cm93CellStats.valid}/{cm93CellStats.checked} passed</li>
-              <li>Sample totals: {cm93CellStats.features.toLocaleString()} feature records · {cm93CellStats.vectors.toLocaleString()} vector records · {cm93CellStats.vectorPoints.toLocaleString()} vector points</li>
-              {cm93CellStats.classes.length > 0 && <li>Object classes: {cm93CellStats.classes.join(', ')}</li>}
-              {cm93CellStats.attributes.length > 0 && <li>Decoded attributes: {cm93CellStats.attributes.join(', ')}</li>}
-              {cm93CellStats.example && <li>Example {cm93CellStats.example.name}: bounds [{cm93CellStats.example.bounds}], {cm93CellStats.example.featureCount} features, {cm93CellStats.example.vectorRecordCount} vectors / {cm93CellStats.example.vectorPointCount} points, {cm93CellStats.example.point2dCount} 2D points; header {cm93CellStats.example.headerLength} bytes, tables {cm93CellStats.example.table1Length.toLocaleString()} + {cm93CellStats.example.table2Length.toLocaleString()} bytes</li>}
-              {cm93CellStats.failures.map((failure) => <li key={failure}>{failure}</li>)}
-            </ul>}
-          </div>}
-          {cmapMetadata && <button className="secondary-button" type="button" onClick={toggleCmapRaster}>{cmapVisible ? 'Hide Portugal raster chart' : 'Show Portugal raster chart'}</button>}
-          <div className="legend">
-            <span className="field-label">WHAT TO INSPECT</span>
-            <ul><li>Pan between chart coverage areas</li><li>Zoom through different scale ranges</li><li>Observe the reference chart and fallback coverage cells</li><li>Check that off-screen chart layers are unloaded</li></ul>
-          </div>
-          <div className="warning-note"><strong>Not for navigation</strong><p>Experimental portrayal only. Do not use for real-world navigation or safety decisions.</p></div>
-        </aside>
-        <section className="chart-panel">
-          <div className="chart-toolbar"><div><span className="eyebrow">REFERENCE SCALE + COVERAGE QUILT PLAN</span><strong>{chartName}</strong></div><span className="source-label">{source}</span></div>
-          <div className="map-wrap" ref={mapContainer} />
-          <div className="map-footer"><span>Natural Earth overview + dynamically selected S-57 layers</span><span>Chart definitions: src/chart-catalog.ts</span></div>
-        </section>
-      </section>
-    </main>
-  );
-}
-, 'i').test((file.webkitRelativePath || file.name).replace(/\\\\/g, '/')),
-    ));
+    const getCellParts = (file: File) => {
+      const path = file.webkitRelativePath || file.name;
+      const parts = path.split('/');
+      const filename = parts[parts.length - 1] || '';
+      return {
+        scale: (parts[parts.length - 2] || '').toUpperCase(),
+        extension: filename.includes('.') ? filename.split('.').pop()!.toUpperCase() : '',
+      };
+    };
+    const allCellFiles = cm93FilesRef.current.filter((file) => {
+      const parts = getCellParts(file);
+      return scaleOrder.includes(parts.scale) && parts.extension === parts.scale;
+    });
+    const scale = scaleOrder.find((code) => allCellFiles.some((file) => getCellParts(file).scale === code));
     if (!scale) {
       setStatus('error');
       setMessage('No CM93 chart-cell files were found in the selected directory.');
       return;
     }
-    const files = allCellFiles.filter((file) =>
-      new RegExp('(?:^|/)' + scale + '/[^/]+\\\\.' + scale + '
-    const map = mapRef.current;
-    if (!map || !cmapMetadata || !map.getLayer('cmap-raster-layer')) return;
-    const nextVisible = !cmapVisible;
-    map.setLayoutProperty('cmap-raster-layer', 'visibility', nextVisible ? 'visible' : 'none');
-    setCmapVisible(nextVisible);
-    if (nextVisible) {
-      const [west, south, east, north] = cmapMetadata.bounds;
-      map.fitBounds([[west, south], [east, north]], { padding: 36, maxZoom: 9, duration: 700 });
-      setChartName(cmapMetadata.name || 'Portugal raster chart');
-      setSource('MBTiles raster chart');
-      setMessage('Raster chart tiles loaded from the optional MBTiles dataset.');
-      setStatus('ready');
-    } else {
-      setMessage('Raster chart hidden. Vector ENC selection remains active.');
-    }
-  };
-
-  return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="brand-mark">A</div>
-        <div className="brand-copy"><strong>AZIMUTE ONE</strong><span>CHART ENGINE LAB</span></div>
-        <div className="topbar-spacer" />
-        <span className="environment-pill">PHASE 0 · PROTOTYPE</span>
-      </header>
-      <section className="workspace">
-        <aside className="sidebar">
-          <p className="eyebrow">VECTOR ENC EXPERIMENT</p>
-          <h1>Chart rendering</h1>
-          <p className="intro">A data-driven chart collection. The engine chooses a reference chart by display scale, plans a coarse coverage quilt with fallback charts, loads the required cells, and unloads cells that are no longer relevant.</p>
-          <div className="status-card">
-            <div className={`status-dot ${status}`} />
-            <div><strong>{status === 'ready' ? 'Chart loaded' : status === 'error' ? 'Load failed' : status === 'loading' ? 'Loading chart' : 'Overview ready'}</strong><p>{message}</p></div>
-          </div>
-          <div className="metric-grid">
-            <div className="metric"><span>VISIBLE CHARTS</span><strong>{selectedCharts.length}</strong></div>
-            <div className="metric"><span>FEATURES</span><strong>{featureCount === null ? '—' : featureCount.toLocaleString()}</strong></div>
-          </div>
-          <div className="legend">
-            <span className="field-label">CATALOGUE MATCHES</span>
-            {selectedCharts.length ? <ul>{selectedCharts.map((title) => <li key={title}>{title}</li>)}</ul> : <p>No chart currently matches this viewport.</p>}
-          </div>
-          <label className="file-button"><span>Load ENC file</span><input type="file" accept=".000,.zip,application/zip,application/octet-stream" onChange={(event) => void onFile(event.target.files?.[0])} /></label>
-          <label className="file-button"><span>Inspect CM93 V2 directory</span><input ref={cm93DirectoryInput} type="file" multiple onChange={(event) => onCm93Directory(event.target.files)} /></label>
-          {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93CellAtMapCenter()}>Render CM93 cell at map centre</button>}
-          {cm93Summary && <div className="legend cm93-summary">
-            <span className="field-label">CM93 DATASET INVENTORY</span>
-            <ul>
-              <li>{cm93Summary.isLikelyCm93V2 ? 'CM93 V2 structure recognized' : 'CM93 V2 structure not fully recognized'}</li>
-              <li>{cm93Summary.fileCount.toLocaleString()} files · {cm93Summary.regionCount} region folders</li>
-              <li>Edition marker(s): {cm93Summary.editionDates.length ? cm93Summary.editionDates.join(', ') : 'not found'}</li>
-              <li>Scales: {cm93Summary.scales.map((scale) => `${scale.code} (${scale.fileCount.toLocaleString()} files)`).join(', ') || 'none found'}</li>
-              <li>Object dictionary: {cm93Summary.hasObjectDictionary ? 'found' : 'missing'}</li>
-              <li>Attribute dictionary: {cm93Summary.hasAttributeDictionary ? 'found' : 'missing'}</li>
-              {cm93DictionaryStats && <li>Parsed dictionaries: {cm93DictionaryStats.objects.toLocaleString()} object classes · {cm93DictionaryStats.attributes.toLocaleString()} attributes</li>}
-            </ul>
-            {cm93Summary.warnings.length > 0 && <p>{cm93Summary.warnings.join(' ')}</p>}
-            <p>Independent byte substitution and cell-header validation are implemented. A sample of up to 12 real cells is checked for consistent header and table boundaries. Geometry extraction and portrayal remain outstanding.</p>
-            {cm93CellStats && <ul>
-              <li>Cell record parsing: {cm93CellStats.valid}/{cm93CellStats.checked} passed</li>
-              <li>Sample totals: {cm93CellStats.features.toLocaleString()} feature records · {cm93CellStats.vectors.toLocaleString()} vector records · {cm93CellStats.vectorPoints.toLocaleString()} vector points</li>
-              {cm93CellStats.classes.length > 0 && <li>Object classes: {cm93CellStats.classes.join(', ')}</li>}
-              {cm93CellStats.attributes.length > 0 && <li>Decoded attributes: {cm93CellStats.attributes.join(', ')}</li>}
-              {cm93CellStats.example && <li>Example {cm93CellStats.example.name}: bounds [{cm93CellStats.example.bounds}], {cm93CellStats.example.featureCount} features, {cm93CellStats.example.vectorRecordCount} vectors / {cm93CellStats.example.vectorPointCount} points, {cm93CellStats.example.point2dCount} 2D points; header {cm93CellStats.example.headerLength} bytes, tables {cm93CellStats.example.table1Length.toLocaleString()} + {cm93CellStats.example.table2Length.toLocaleString()} bytes</li>}
-              {cm93CellStats.failures.map((failure) => <li key={failure}>{failure}</li>)}
-            </ul>}
-          </div>}
-          {cmapMetadata && <button className="secondary-button" type="button" onClick={toggleCmapRaster}>{cmapVisible ? 'Hide Portugal raster chart' : 'Show Portugal raster chart'}</button>}
-          <div className="legend">
-            <span className="field-label">WHAT TO INSPECT</span>
-            <ul><li>Pan between chart coverage areas</li><li>Zoom through different scale ranges</li><li>Observe the reference chart and fallback coverage cells</li><li>Check that off-screen chart layers are unloaded</li></ul>
-          </div>
-          <div className="warning-note"><strong>Not for navigation</strong><p>Experimental portrayal only. Do not use for real-world navigation or safety decisions.</p></div>
-        </aside>
-        <section className="chart-panel">
-          <div className="chart-toolbar"><div><span className="eyebrow">REFERENCE SCALE + COVERAGE QUILT PLAN</span><strong>{chartName}</strong></div><span className="source-label">{source}</span></div>
-          <div className="map-wrap" ref={mapContainer} />
-          <div className="map-footer"><span>Natural Earth overview + dynamically selected S-57 layers</span><span>Chart definitions: src/chart-catalog.ts</span></div>
-        </section>
-      </section>
-    </main>
-  );
-}
-, 'i').test((file.webkitRelativePath || file.name).replace(/\\\\/g, '/')),
-    ).sort((left, right) => (left.webkitRelativePath || left.name).localeCompare(right.webkitRelativePath || right.name));
+    const files = allCellFiles.filter((file) => getCellParts(file).scale === scale)
+      .sort((left, right) => (left.webkitRelativePath || left.name).localeCompare(right.webkitRelativePath || right.name));
 
     setStatus('loading');
     setChartName('CM93 dataset overview (' + scale + ' scale)');
@@ -764,6 +601,7 @@ export default function App() {
           <label className="file-button"><span>Load ENC file</span><input type="file" accept=".000,.zip,application/zip,application/octet-stream" onChange={(event) => void onFile(event.target.files?.[0])} /></label>
           <label className="file-button"><span>Inspect CM93 V2 directory</span><input ref={cm93DirectoryInput} type="file" multiple onChange={(event) => onCm93Directory(event.target.files)} /></label>
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93CellAtMapCenter()}>Render CM93 cell at map centre</button>}
+          {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93Overview()}>Render CM93 dataset overview</button>}
           {cm93Summary && <div className="legend cm93-summary">
             <span className="field-label">CM93 DATASET INVENTORY</span>
             <ul>
