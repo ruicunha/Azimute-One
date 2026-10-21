@@ -810,44 +810,6 @@ export default function App() {
     }
 
     if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
-      const file = selection.files[index];
-      const key = (file.webkitRelativePath || file.name).toLowerCase();
-      let cellFeatures = cm93DecodedCacheRef.current.get(key);
-      if (cellFeatures) {
-        // Refresh insertion order for a small LRU-style cache.
-        cm93DecodedCacheRef.current.delete(key);
-        cm93DecodedCacheRef.current.set(key, cellFeatures);
-      } else {
-        try {
-          const cell = parseCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
-          cellFeatures = cm93CellToGeoJSON(cell, dictionary).geojson.features;
-          cm93DecodedCacheRef.current.set(key, cellFeatures);
-          decoded++;
-          while (cm93DecodedCacheRef.current.size > 240) {
-            const oldest = cm93DecodedCacheRef.current.keys().next().value;
-            if (oldest === undefined) break;
-            cm93DecodedCacheRef.current.delete(oldest);
-          }
-        } catch {
-          failed++;
-          failedCellNames.push(file.name);
-          continue;
-        }
-      }
-      if (!cellFeatures) continue;
-      if (cellFeatures.length === 0) emptyCells++;
-      // Tag each feature with its source cell. When a finer cell has no usable
-      // information, this lets the next quilt retain older-scale features from
-      // cells that are not covered by the new selection instead of blanking them.
-      features.push(...cellFeatures.map((feature) => ({
-        ...feature,
-        properties: { ...(feature.properties ?? {}), cm93SourceCell: key },
-      })));
-      // Yield periodically so the UI can respond while a viewport quilt is built.
-      if ((index + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    }
-
-    if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
     // Never leave features from the previous zoom or viewport visible when
     // the current selection has no usable data. The selector has already tried
     // available coarser fallbacks, so stale prior-render features must be cleared.
@@ -861,14 +823,7 @@ export default function App() {
       setMessage('No usable CM93 features in the current viewport at target scale ' + selection.scale + ' or its available coarser fallbacks.');
       return;
     }
-    // Only cells that produced usable features can replace older coverage.
-    // A file that decodes to zero features (or fails to decode) is not evidence
-    // that the geographic area has been replaced at this scale.
-    const currentCellKeys = new Set(features
-      .map((feature) => feature.properties?.cm93SourceCell)
-      .filter((key): key is string => typeof key === 'string')
-      .map((key) => key.toLowerCase()));
-    const quiltFeatures = mergeCm93QuiltFeatures(features, cm93RenderedFeaturesRef.current, currentCellKeys);
+    const quiltFeatures = mergeCm93QuiltFeatures(features);
     const data = { type: 'FeatureCollection', features: quiltFeatures } as never;
     const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
     if (existingSource?.setData) {
