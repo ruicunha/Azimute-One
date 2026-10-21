@@ -862,10 +862,10 @@ export default function App() {
     visibleCm93PointClassesRef.current = next; setVisibleCm93PointClasses(next);
     const map = mapRef.current; if (!map) return;
     for (const layerId of ['cm93-cell-icons', 'cm93-quilt-icons']) {
-      if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+      if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', next]]]);
     }
     for (const layerId of ['cm93-cell-labels', 'cm93-quilt-labels']) {
-      if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+      if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', next]]]);
     }
   };
 
