@@ -12,6 +12,7 @@ This is an isolated Phase 0 experiment. It demonstrates chart selection from a c
 - Unload chart layers and their data when they are no longer selected.
 - Parse S-57 cells in the browser using `@s57-parser/s57` and render features through MapLibre GeoJSON sources/layers.
 - Load a local `.000` cell or exchange-set ZIP for manual inspection.
+- Select an extracted CM93 V2 directory to validate its edition markers, dictionaries, geographic region folders, and available scale folders.
 
 ## How selection works
 
@@ -31,13 +32,21 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. The hosted demo downloads sample NOAA ENC ZIPs during the Pages build. Local ENC files can be selected with **Load ENC file**. An optional MBTiles raster chart can also be converted into static XYZ PNG tiles and deployed alongside the ENC charts.
+Open the local URL printed by Vite. The hosted demo downloads sample NOAA ENC ZIPs during the Pages build. Local ENC files can be selected with **Load ENC file**. In supported Chromium browsers, **Inspect CM93 V2 directory** inventories an extracted CM93 V2 folder. An optional MBTiles raster chart can also be converted into static XYZ PNG tiles and deployed alongside the ENC charts.
 
 ## GitHub Pages demo
 
 The GitHub Actions workflow builds this prototype and downloads the sample NOAA ZIPs into the generated static site. After GitHub Pages is configured to use **GitHub Actions** in repository Settings → Pages, pushes to `main` deploy the demo at:
 
 https://ruicunha.github.io/Azimute-One/
+
+## CM93 V2 support status
+
+The prototype currently recognizes and inventories an extracted CM93 V2 directory selected through the browser directory picker. It checks for `CM93OBJ.DIC`, `CM93ATTR.DIC`, `YYYYMMDD.EXD` edition markers, eight-digit region directories, and chart files under scale folders A–G. It reports file counts by scale and any missing structural elements.
+
+**This is dataset recognition only, not CM93 chart rendering.** CM93 V2 cell records use proprietary binary encoding. The browser renderer does not yet decode those records into geographic features or portray them on the map. That decoder and its coordinate/geometry validation are the next implementation step. The directory picker requires a browser that supports folder selection (typically Chromium-based browsers).
+
+CM93 V2 is a legacy proprietary chart format. Confirm that you have the right to use, decode, and redistribute the chart data before deploying datasets or derived features.
 
 ## Optional MBTiles raster charts
 
