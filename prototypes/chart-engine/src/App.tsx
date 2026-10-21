@@ -544,7 +544,7 @@ export default function App() {
       const cell = parseCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
       const result = cm93CellToGeoJSON(cell, dictionary);
       if (!map.isStyleLoaded()) await new Promise<void>((resolve) => map.once('load', resolve));
-      for (const layerId of ['cm93-cell-labels', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
+      for (const layerId of ['cm93-cell-labels', 'cm93-cell-depth-labels', 'cm93-cell-icons', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
         if (map.getLayer(layerId)) map.removeLayer(layerId);
       }
       if (map.getSource('cm93-active-cell')) map.removeSource('cm93-active-cell');
@@ -651,7 +651,7 @@ export default function App() {
         throw new Error('No CM93 cells at this scale could be decoded.');
       }
       if (!map.isStyleLoaded()) await new Promise<void>((resolve) => map.once('load', resolve));
-      for (const layerId of ['cm93-cell-labels', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
+      for (const layerId of ['cm93-cell-labels', 'cm93-cell-depth-labels', 'cm93-cell-icons', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
         if (map.getLayer(layerId)) map.removeLayer(layerId);
       }
       if (map.getSource('cm93-active-cell')) map.removeSource('cm93-active-cell');
@@ -668,7 +668,7 @@ export default function App() {
           'fill-opacity': 0.52,
         },
       });
-      addCm93PointLayer(map, 'cm93-active-cell', 'cm93-cell-points', visibleCm93PointClassesRef.current);
+      addCm93PortrayalLayers(map, 'cm93-active-cell', 'cm93-cell', visibleCm93PointClassesRef.current);
 
 
 
@@ -787,7 +787,7 @@ export default function App() {
     // The quilt source now contains the finest available cell for each target
     // footprint, including coarser fallbacks. Remove the whole-dataset overview
     // only after this replacement is ready so the two sources never double-draw.
-    for (const layerId of ['cm93-cell-labels', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
+    for (const layerId of ['cm93-cell-labels', 'cm93-cell-depth-labels', 'cm93-cell-icons', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
       if (map.getLayer(layerId)) map.removeLayer(layerId);
     }
     if (map.getSource('cm93-active-cell')) map.removeSource('cm93-active-cell');
