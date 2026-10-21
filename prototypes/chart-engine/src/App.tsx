@@ -602,24 +602,19 @@ export default function App() {
       north: bounds.getNorth(),
     }, map.getZoom(), 180);
 
-    const scaleOrder = ['Z', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
-    const overviewIndex = cm93OverviewScaleRef.current ? scaleOrder.indexOf(cm93OverviewScaleRef.current) : -1;
-    const scaleIndex = scaleOrder.indexOf(selection.scale);
-    // The overview already supplies these coarse scales; overlay only finer
-    // cells so the same CM93 features are not rendered twice.
-    if (overviewIndex >= 0 && scaleIndex <= overviewIndex) {
-      clearCm93Quilt(map);
-      setCm93QuiltStats(null);
-      setStatus('ready');
-      setMessage('Automatic CM93 detail is enabled. The overview already covers scale ' + selection.scale + '. Zoom in for finer cells.');
-      return;
-    }
-
     if (selection.files.length === 0) {
       clearCm93Quilt(map);
-      setCm93QuiltStats({ scale: selection.scale, cells: 0, features: 0, cached: cm93DecodedCacheRef.current.size, failed: 0 });
+      setCm93QuiltStats({
+        scale: selection.scale,
+        cells: 0,
+        features: 0,
+        cached: cm93DecodedCacheRef.current.size,
+        failed: 0,
+      });
       setStatus('ready');
-      setMessage('Automatic CM93 detail: no ' + selection.scale + '-scale cells cover this viewport. The overview remains visible.');
+      setMessage('Automatic CM93 detail: no cells at scale ' + selection.scale +
+        ' or any coarser fallback scale cover this viewport.' +
+        (map.getSource('cm93-active-cell') ? ' The overview remains visible.' : ' No CM93 coverage is available here.'));
       return;
     }
 
@@ -692,8 +687,20 @@ export default function App() {
       });
     }
 
+    // The quilt source now contains the finest available cell for each target
+    // footprint, including coarser fallbacks. Remove the whole-dataset overview
+    // only after this replacement is ready so the two sources never double-draw.
+    for (const layerId of ['cm93-cell-labels', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
+      if (map.getLayer(layerId)) map.removeLayer(layerId);
+    }
+    if (map.getSource('cm93-active-cell')) map.removeSource('cm93-active-cell');
+
+    const scaleBreakdown = Object.entries(selection.scaleCounts)
+      .filter((entry) => entry[1])
+      .map(([scale, count]) => scale + ':' + count)
+      .join(', ');
     setCm93QuiltStats({
-      scale: selection.scale,
+      scale: selection.scale + ' target (' + (scaleBreakdown || 'no cells') + ')',
       cells: selection.files.length,
       features: features.length,
       cached: cm93DecodedCacheRef.current.size,
@@ -780,7 +787,7 @@ export default function App() {
           {cm93AutoEnabled && cm93QuiltStats && <div className="legend">
             <span className="field-label">AUTOMATIC CM93 VIEWPORT QUILT</span>
             <ul>
-              <li>Selected scale: {cm93QuiltStats.scale}</li>
+              <li>Target scale / actual cell mix: {cm93QuiltStats.scale}</li>
               <li>Viewport cells: {cm93QuiltStats.cells}</li>
               <li>Rendered features: {cm93QuiltStats.features.toLocaleString()}</li>
               <li>Decoded-cell cache: {cm93QuiltStats.cached} cells</li>
