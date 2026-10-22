@@ -40,14 +40,15 @@ test('falls back to the nearest coarser scale when no target-scale cells exist i
   assert.deepEqual(result.scaleCounts, { C: 1 });
 });
 
-test('does not mix coarse underlay cells with the requested scale when fine cells exist', () => {
+test('keeps coarser cells as fill-only underlays when detailed cells exist', () => {
   const fine = cell('03841050.D', 'cm93/03301020/D/03841050.D');
   const coarse = cell('03781044.C', 'cm93/03301020/C/03781044.C');
   const result = selectCm93ViewportCells([fine, coarse], {
     west: -9.4, south: 38.4, east: -8.8, north: 38.9,
   }, 8);
 
-  assert.deepEqual(result.files, [fine], 'only the requested scale may be rendered');
+  assert.deepEqual(result.files, [fine], 'the requested scale remains primary');
+  assert.deepEqual(result.fillFallbackFiles, [coarse], 'the coarser cell is only an area-fill underlay');
   assert.deepEqual(result.scaleCounts, { D: 1 });
 });
 
@@ -134,6 +135,18 @@ test('selects finer E/F/G cells as fill-only supplements at D/E/F scales', () =>
   assert.ok(result.files.includes(coarse));
   assert.deepEqual(result.fillFallbackFiles, [g], 'the finest available same-footprint cell is preferred');
   assert.deepEqual(result.scaleCounts, { D: 1 });
+});
+
+test('loads a coarser D cell as a fill-only underlay for an E-scale coverage gap', () => {
+  const coarse = cell('03841050.D', 'cm93/03301020/D/03841050.D');
+  const detailed = cell('03851052.E', 'cm93/03301020/E/03851052.E');
+  const result = selectCm93ViewportCells([coarse, detailed], {
+    west: -9.4, south: 38.5, east: -9.2, north: 38.7,
+  }, 10);
+
+  assert.ok(result.files.includes(detailed), 'keep the requested-scale cell');
+  assert.ok(!result.files.includes(coarse), 'do not treat the coarser cell as primary');
+  assert.ok(result.fillFallbackFiles.includes(coarse), 'load the coarser cell for area fills');
 });
 
 test('uses finer fill-only cells when the requested E cell exists but lacks local coverage', () => {
