@@ -31,6 +31,7 @@ type CacheTelemetry = {
 };
 
 const counters = { hits: 0, misses: 0, readErrors: 0, writes: 0, writeErrors: 0, evictions: 0, skippedOversized: 0 };
+let lastTelemetry: CacheTelemetry | null = null;
 
 async function getTelemetry(): Promise<CacheTelemetry> {
   const database = await openDatabase();
@@ -41,13 +42,14 @@ async function getTelemetry(): Promise<CacheTelemetry> {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error ?? new Error('Could not inspect CM93 cache statistics.'));
     });
-    return {
+    lastTelemetry = {
       ...counters,
       entries: entries.length,
       estimatedBytes: entries.reduce((total, entry) =>
         total + (typeof entry.sizeBytes === 'number' ? entry.sizeBytes : estimateSizeBytes(entry.value)), 0),
       budgetBytes: CACHE_BUDGET_BYTES,
     };
+    return lastTelemetry;
   } finally {
     database.close();
   }
@@ -179,8 +181,18 @@ async function buildOrRead(request: Extract<RequestMessage, { type: 'build' }>) 
   }
   if (cached) {
     counters.hits++;
-    let telemetry: CacheTelemetry | undefined;
-    try { telemetry = await getTelemetry(); } catch { /* Stats are diagnostic only. */ }
+    // Do not scan and structured-clone the entire persistent cache on every
+    // hit. Entries can total hundreds of MiB; reading all of them for telemetry
+    // made the supposedly fast path expensive. Reuse the last storage snapshot
+    // and refresh only the session counters. Storage size is refreshed on a
+    // cache miss/write, when the extra diagnostic work is less intrusive.
+    if (!lastTelemetry) {
+      // Populate the initial storage snapshot once per worker session so the
+      // diagnostics panel remains useful after a page reload. Subsequent hits
+      // never rescan the full cache.
+      try { await getTelemetry(); } catch { /* Stats are diagnostic only. */ }
+    }
+    const telemetry = lastTelemetry ? { ...lastTelemetry, ...counters } : undefined;
     return { value: cached, cacheHit: true, telemetry };
   }
 
