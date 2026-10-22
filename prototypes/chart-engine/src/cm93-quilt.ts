@@ -81,6 +81,9 @@ export function selectCm93ViewportCells(
     const pathParts = (file.webkitRelativePath || file.name).toLowerCase().split('/');
     byPath.set('/' + pathParts.slice(-3).join('/'), file);
   }
+  if (byPath.size === 0) {
+    return { scale: targetScale, files: [], fillFallbackFiles: [], scaleCounts: {} };
+  }
 
   const south = Math.max(-79.5, Math.min(bounds.south, bounds.north));
   const north = Math.min(80, Math.max(bounds.south, bounds.north));
