@@ -165,13 +165,18 @@ async function lookup(request: Extract<RequestMessage, { type: 'lookup' }>) {
   }
   if (cached) {
     counters.hits++;
-    // This first-hit telemetry snapshot still scans the persistent store.
-    // Avoid doing that on the hot path; diagnostics can be refreshed after a
-    // cold build/write instead. We return known counters if no snapshot exists.
+    // The persistent-size snapshot is expensive because IndexedDB returns
+    // full stored values. Take it at most once per worker session, never on
+    // subsequent hits. The main hot-path optimization is that lookup requests
+    // carry only the key, not the decoded feature array.
     if (!lastTelemetry) {
-      return { cacheHit: true, value: cached, telemetry: undefined };
+      try { await getTelemetry(); } catch { /* Statistics must not block rendering. */ }
     }
-    return { cacheHit: true, value: cached, telemetry: { ...lastTelemetry, ...counters } };
+    return {
+      cacheHit: true,
+      value: cached,
+      telemetry: lastTelemetry ? { ...lastTelemetry, ...counters } : undefined,
+    };
   }
 
   counters.misses++;
