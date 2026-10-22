@@ -63,7 +63,10 @@ function pathForCell(latitudeCell: number, longitudeCell: number, scale: string)
 export type Cm93ViewportSelection = {
   /** Scale requested by the current zoom; per-cell fine fallback may be present. */
   scale: Cm93ScaleCode;
+  /** Primary cells selected at the requested scale, or coarser fallback scale. */
   files: Cm93CellFile[];
+  /** Finer E/F/G cells used only for area fills, never points or lines. */
+  fillFallbackFiles: Cm93CellFile[];
   scaleCounts: Partial<Record<Cm93ScaleCode, number>>;
 };
 
@@ -128,11 +131,43 @@ export function selectCm93ViewportCells(
         const actualScale = (file.webkitRelativePath || file.name).split('.').pop()?.toUpperCase() as Cm93ScaleCode;
         scaleCounts[actualScale] = (scaleCounts[actualScale] ?? 0) + 1;
       }
-      return { scale: targetScale, files: [...selected.values()], scaleCounts };
+
+      // Fine-grid cells may contain valid depth/land polygons in places where
+      // a selected coarse cell has no geometry. Keep these as fill-only
+      // supplements so their points and lines cannot create multi-scale clutter.
+      const fillFallbackFiles = new Map<string, Cm93CellFile>();
+      if (targetIndex >= CM93_SCALE_ORDER.indexOf('D') && targetScale !== 'G') {
+        const fineScales = CM93_SCALE_ORDER.slice(Math.max(targetIndex + 1, CM93_SCALE_ORDER.indexOf('E'))).reverse();
+        const fineSouth = Math.max(-79.5, Math.min(bounds.south, bounds.north));
+        const fineNorth = Math.min(80, Math.max(bounds.south, bounds.north));
+        const fineWest = Math.min(bounds.west, bounds.east);
+        const fineEast = Math.max(bounds.west, bounds.east);
+        const fineLongitudeSpan = Math.min(360, Math.max(0, fineEast - fineWest));
+        const firstFineLatitudeCell = Math.floor(fineSouth * 3 + 240);
+        const lastFineLatitudeCell = Math.floor(fineNorth * 3 + 240);
+        const firstFineLongitudeCell = Math.floor(normalizedLongitude(fineWest) * 3);
+        const lastFineLongitudeCell = Math.floor(normalizedLongitude(fineWest) * 3 + fineLongitudeSpan * 3);
+
+        for (let latitudeCell = firstFineLatitudeCell; latitudeCell <= lastFineLatitudeCell; latitudeCell++) {
+          for (let longitudeCellUnwrapped = firstFineLongitudeCell; longitudeCellUnwrapped <= lastFineLongitudeCell; longitudeCellUnwrapped++) {
+            const longitudeCell = ((longitudeCellUnwrapped % 1080) + 1080) % 1080;
+            for (const fineScale of fineScales) {
+              const found = byPath.get(pathForCell(latitudeCell, longitudeCell, fineScale));
+              if (!found) continue;
+              const key = (found.webkitRelativePath || found.name).toLowerCase();
+              if (!selected.has(key)) fillFallbackFiles.set(key, found);
+              break;
+            }
+            if (selected.size + fillFallbackFiles.size >= maxCells) break;
+          }
+          if (selected.size + fillFallbackFiles.size >= maxCells) break;
+        }
+      }
+      return { scale: targetScale, files: [...selected.values()], fillFallbackFiles: [...fillFallbackFiles.values()], scaleCounts };
     }
   }
 
-  return { scale: targetScale, files: [], scaleCounts: {} };
+  return { scale: targetScale, files: [], fillFallbackFiles: [], scaleCounts: {} };
 }
 
 /** Do not retain features from previous viewports or zoom levels. */
