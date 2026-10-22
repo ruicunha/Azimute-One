@@ -7,7 +7,7 @@ import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-c
 import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
 import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
-import { mergeCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt';
+import { buildCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -818,10 +818,12 @@ export default function App() {
     }, map.getZoom(), 1200);
 
     if (selection.files.length === 0) {
-      // Do not clear the last good quilt just because the current scale/path
-      // lookup temporarily finds no cell. This avoids a blank flash during
-      // scale transitions; the previous GeoJSON remains geographically placed
-      // and naturally moves out of view as the user pans away.
+      // A prior quilt is not valid fallback for the current viewport: leaving
+      // it mounted makes portrayal depend on pan/zoom history. Clear it when
+      // no current cell (at any coarser fallback scale) is available.
+      const source = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
+      source?.setData?.({ type: 'FeatureCollection', features: [] } as never);
+      cm93RenderedFeaturesRef.current = [];
       setCm93QuiltStats({
         scale: selection.scale,
         cells: 0,
@@ -885,19 +887,18 @@ export default function App() {
     }
 
     if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
-    // Never replace a valid quilt with a blank result while transitioning to a
-    // scale whose selected cells contain no usable features. Keep the last good
-    // portrayal until a useful quilt can be built.
-    if (features.length === 0) {
+    // Do not reuse a prior zoom's features when selected cells fail to decode
+    // or contain no usable geometry. That creates stale overlays and makes the
+    // chart depend on navigation history.
+    const quiltFeatures = buildCm93QuiltFeatures(features);
+    if (quiltFeatures.length === 0) {
+      const source = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
+      source?.setData?.({ type: 'FeatureCollection', features: [] } as never);
+      cm93RenderedFeaturesRef.current = [];
       setStatus('ready');
-      setMessage('No usable features at target scale ' + selection.scale + '. Keeping the previous chart coverage until useful detail is available.');
+      setMessage('No usable features in the currently selected CM93 cells at scale ' + selection.scale + '. Previous-scale features were cleared to avoid stale overlays.');
       return;
     }
-    const currentCellKeys = new Set(selection.files.map((file) => (file.webkitRelativePath || file.name).toLowerCase()));
-    // A partially populated target-scale quilt must not erase useful coverage
-    // from the previous zoom. Replace cells that are selected now; retain
-    // features from prior cells only where this selection has no corresponding cell.
-    const quiltFeatures = mergeCm93QuiltFeatures(features, cm93RenderedFeaturesRef.current, currentCellKeys);
     const data = { type: 'FeatureCollection', features: quiltFeatures } as never;
     const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
     if (existingSource?.setData) {
