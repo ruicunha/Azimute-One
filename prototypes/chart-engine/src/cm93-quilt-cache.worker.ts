@@ -81,9 +81,14 @@ async function buildOrRead(request: Extract<RequestMessage, { type: 'build' }>) 
   return { value, cacheHit: false };
 }
 
-self.addEventListener('message', (event: MessageEvent<RequestMessage>) => {
+const workerScope = self as unknown as {
+  addEventListener(type: string, listener: (event: MessageEvent<RequestMessage>) => void): void;
+  postMessage(message: unknown): void;
+};
+
+workerScope.addEventListener('message', (event: MessageEvent<RequestMessage>) => {
   const request = event.data;
-  const reply = (ok: boolean, value?: unknown, error?: string) => self.postMessage({ id: request.id, ok, value, error });
+  const reply = (ok: boolean, value?: unknown, error?: string) => workerScope.postMessage({ id: request.id, ok, value, error });
   const operation = request.type === 'build'
     ? buildOrRead(request).then((value) => reply(true, value))
     : openDatabase().then(async (database) => {
