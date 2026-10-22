@@ -1,10 +1,10 @@
 /**
  * Viewport-aware CM93 V2 cell selection for the experimental chart quilt.
  *
- * Scale thresholds are provisional display-scale heuristics. Each viewport
- * target footprint selects its requested scale plus available coarser cells,
- * so coarser features can remain visible beneath gaps in finer-scale geometry.
- * This is not an authoritative coverage-polygon implementation.
+ * The viewport renders one chart scale at a time. If no cells exist at the
+ * requested scale anywhere in the viewport, selection falls back to the
+ * nearest coarser scale available. Mixing scales without CM93 coverage
+ * polygons causes overlapping depth areas and is not a valid quilt.
  */
 export type Cm93CellFile = {
   name: string;
@@ -33,10 +33,7 @@ export const CM93_SCALE_STEPS: Record<Cm93ScaleCode, number> = {
   G: 1,
 };
 
-/**
- * Delay finer-scale transitions until the map is sufficiently zoomed in.
- * These are deliberately tunable after observing the actual CM93 portrayal.
- */
+/** Delay finer-scale transitions until the map is sufficiently zoomed in. */
 export function cm93ScaleForZoom(zoom: number): Cm93ScaleCode {
   if (zoom < 3.5) return 'Z';
   if (zoom < 4.5) return 'A';
@@ -62,11 +59,11 @@ function pathForCell(latitudeCell: number, longitudeCell: number, scale: string)
 }
 
 export type Cm93ViewportSelection = {
-  /** The scale requested by the current zoom, not necessarily every cell's scale. */
+  /** Scale requested by the current zoom; fallback is used only if it is absent. */
   scale: Cm93ScaleCode;
-  /** Unique selected cells, ordered coarse-to-fine for stable underlay portrayal. */
+  /** Cells from exactly one scale, so chart layers cannot overlap across scales. */
   files: Cm93CellFile[];
-  /** Number of selected cells at each actual scale. */
+  /** Number of selected cells at each actual scale (at most one scale key). */
   scaleCounts: Partial<Record<Cm93ScaleCode, number>>;
 };
 
@@ -78,7 +75,6 @@ export function selectCm93ViewportCells(
 ): Cm93ViewportSelection {
   const targetScale = cm93ScaleForZoom(zoom);
   const targetIndex = CM93_SCALE_ORDER.indexOf(targetScale);
-  const targetStep = CM93_SCALE_STEPS[targetScale];
   const byPath = new Map<string, Cm93CellFile>();
   for (const file of files) {
     const pathParts = (file.webkitRelativePath || file.name).toLowerCase().split('/');
@@ -89,61 +85,47 @@ export function selectCm93ViewportCells(
   const north = Math.min(80, Math.max(bounds.south, bounds.north));
   const west = Math.min(bounds.west, bounds.east);
   const east = Math.max(bounds.west, bounds.east);
-  const firstLatitudeCell = Math.floor((south * 3 + 240) / targetStep) * targetStep;
-  const lastLatitudeCell = Math.floor((north * 3 + 240) / targetStep) * targetStep;
   const longitudeSpan = Math.min(360, Math.max(0, east - west));
-  const firstLongitudeCell = Math.floor((normalizedLongitude(west) * 3) / targetStep) * targetStep;
-  const lastLongitudeCell = Math.floor((normalizedLongitude(west) * 3 + longitudeSpan * 3) / targetStep) * targetStep;
-  const selected = new Map<string, { file: Cm93CellFile; scale: Cm93ScaleCode }>();
 
-  for (let latitudeCell = firstLatitudeCell; latitudeCell <= lastLatitudeCell; latitudeCell += targetStep) {
-    for (let longitudeCellUnwrapped = firstLongitudeCell; longitudeCellUnwrapped <= lastLongitudeCell; longitudeCellUnwrapped += targetStep) {
-      const longitudeCell = ((longitudeCellUnwrapped % 1080) + 1080) % 1080;
-      const centerLatitude = (latitudeCell + targetStep / 2 - 240) / 3;
-      const centerLongitude = normalizedLongitude((longitudeCellUnwrapped + targetStep / 2) / 3);
-      // Select the requested scale and every available coarser scale for the
-      // same target footprint. Coarser cells are an underlay, not a substitute
-      // only when a filename is missing: finer cells can exist yet have no
-      // feature geometry at a particular point. Rendering the underlay beneath
-      // finer-scale fills lets those gaps show the coarser chart without keeping
-      // arbitrary features from a previous viewport.
-      for (let scaleIndex = targetIndex; scaleIndex >= 0; scaleIndex--) {
-        const scale = CM93_SCALE_ORDER[scaleIndex];
-        const step = CM93_SCALE_STEPS[scale];
-        const candidateLatitudeCell = Math.floor((centerLatitude * 3 + 240) / step) * step;
-        const candidateLongitudeCell = Math.floor((centerLongitude * 3) / step) * step;
-        const candidatePath = pathForCell(candidateLatitudeCell, candidateLongitudeCell, scale);
+  // Try one scale across the whole viewport at a time. A coarser chart may be
+  // used only when the requested scale has no cells in this viewport at all.
+  // Per-footprint mixing is unsafe without decoded CM93 coverage geometry.
+  for (let scaleIndex = targetIndex; scaleIndex >= 0; scaleIndex--) {
+    const scale = CM93_SCALE_ORDER[scaleIndex];
+    const step = CM93_SCALE_STEPS[scale];
+    const firstLatitudeCell = Math.floor((south * 3 + 240) / step) * step;
+    const lastLatitudeCell = Math.floor((north * 3 + 240) / step) * step;
+    const firstLongitudeCell = Math.floor((normalizedLongitude(west) * 3) / step) * step;
+    const lastLongitudeCell = Math.floor((normalizedLongitude(west) * 3 + longitudeSpan * 3) / step) * step;
+    const selected = new Map<string, Cm93CellFile>();
+
+    for (let latitudeCell = firstLatitudeCell; latitudeCell <= lastLatitudeCell; latitudeCell += step) {
+      for (let longitudeCellUnwrapped = firstLongitudeCell; longitudeCellUnwrapped <= lastLongitudeCell; longitudeCellUnwrapped += step) {
+        const longitudeCell = ((longitudeCellUnwrapped % 1080) + 1080) % 1080;
+        const candidatePath = pathForCell(latitudeCell, longitudeCell, scale);
         const found = byPath.get(candidatePath);
         if (found) {
           const key = (found.webkitRelativePath || found.name).toLowerCase();
-          if (!selected.has(key)) selected.set(key, { file: found, scale });
+          if (!selected.has(key)) selected.set(key, found);
         }
+        if (selected.size >= maxCells) break;
       }
-      if (selected.size >= maxCells) {
-        const result = [...selected.values()].sort((a, b) => CM93_SCALE_ORDER.indexOf(a.scale) - CM93_SCALE_ORDER.indexOf(b.scale));
-        const scaleCounts: Partial<Record<Cm93ScaleCode, number>> = {};
-        for (const item of result) scaleCounts[item.scale] = (scaleCounts[item.scale] ?? 0) + 1;
-        return { scale: targetScale, files: result.map((item) => item.file), scaleCounts };
-      }
+      if (selected.size >= maxCells) break;
+    }
+
+    if (selected.size > 0) {
+      return {
+        scale: targetScale,
+        files: [...selected.values()],
+        scaleCounts: { [scale]: selected.size },
+      };
     }
   }
 
-  const result = [...selected.values()].sort((a, b) => CM93_SCALE_ORDER.indexOf(a.scale) - CM93_SCALE_ORDER.indexOf(b.scale));
-  const scaleCounts: Partial<Record<Cm93ScaleCode, number>> = {};
-  for (const item of result) scaleCounts[item.scale] = (scaleCounts[item.scale] ?? 0) + 1;
-  return { scale: targetScale, files: result.map((item) => item.file), scaleCounts };
+  return { scale: targetScale, files: [], scaleCounts: {} };
 }
 
-
-/**
- * Build a quilt exclusively from cells selected for the current viewport.
- *
- * Previous-render features are intentionally not merged here: cell selection
- * already chooses coarser cells where a target-grid cell is missing. Retaining
- * arbitrary features from the previous viewport/scale makes the result depend
- * on navigation history and creates stale overlays. Exact coverage clipping
- * still requires decoded CM93 coverage polygons and is not claimed here.
- */
+/** Do not retain features from previous viewports or zoom levels. */
 export function buildCm93QuiltFeatures(
   currentFeatures: GeoJSON.Feature[],
 ): GeoJSON.Feature[] {
