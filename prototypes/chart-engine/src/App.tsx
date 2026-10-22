@@ -8,6 +8,7 @@ import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
 import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
 import { buildCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt';
+import { buildCm93CoverageQuiltFeatures } from './cm93-quilt-geometry';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -378,8 +379,8 @@ export default function App() {
           renderedFeatureCountAtClick: renderedFeatures.length,
         },
         notes: [
-          'Selected-cell paths are filename/grid-based candidates, not verified M_COVR coverage.',
-          'Finer fill-fallback cells contribute area polygons only; points and lines remain at the primary scale.',
+          'Selected-cell paths are filename/grid-based candidates; decoded M_COVR coverage determines which scale renders at each location.',
+          'Each scale is clipped to its allocated coverage region; coarser scales fill only regions not covered by more detailed scales.',
           'A null cachedDecodedFeatureCount means that cell is not currently in the decoded cache.',
           'Rendered features are only features MapLibre reports at the clicked pixel and may be empty if no CM93 layer is visible there.',
         ],
@@ -797,7 +798,7 @@ export default function App() {
 
       map.fitBounds([[west, south], [east, north]], { padding: 40, maxZoom: 8, duration: 600 });
     const pointCounts = new Map<string, number>();
-      for (const feature of features) { if (feature.geometry.type === 'Point' || feature.geometry.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } }
+      for (const feature of quiltFeatures) { if (feature.geometry?.type === 'Point' || feature.geometry?.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } }
       setCm93PointClassCounts([...pointCounts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count));
       cm93OverviewScaleRef.current = scale;
       cm93AutoEnabledRef.current = true;
@@ -852,20 +853,17 @@ export default function App() {
     }
 
     setStatus('loading');
-    setMessage('Loading CM93 ' + selection.scale + '-scale detail: ' + (selection.files.length + selection.fillFallbackFiles.length) + ' viewport cells…');
+    setMessage('Loading CM93 ' + selection.scale + '-scale coverage quilt: ' + selection.files.length + ' candidate cells…');
     const features: ReturnType<typeof cm93CellToGeoJSON>['geojson']['features'] = [];
     let failed = 0;
     let decoded = 0;
     let emptyCells = 0;
     const failedCellNames: string[] = [];
 
-    const selectedForRendering = [
-      ...selection.files.map((file) => ({ file, fillOnly: false })),
-      ...selection.fillFallbackFiles.map((file) => ({ file, fillOnly: true })),
-    ];
+    const selectedForRendering = selection.files.map((file) => ({ file }));
     for (let index = 0; index < selectedForRendering.length; index++) {
       if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
-      const { file, fillOnly } = selectedForRendering[index];
+      const { file } = selectedForRendering[index];
       const key = (file.webkitRelativePath || file.name).toLowerCase();
       let cellFeatures = cm93DecodedCacheRef.current.get(key);
       if (cellFeatures) {
@@ -891,17 +889,10 @@ export default function App() {
       }
       if (!cellFeatures) continue;
       if (cellFeatures.length === 0) emptyCells++;
-      // Fine fallback cells only contribute area polygons. Their point and line
-      // features are intentionally omitted to avoid duplicate marks and paths.
-      const renderableFeatures = fillOnly
-        ? cellFeatures.filter((feature) =>
-          (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') &&
-          ['DEPARE', 'DRGARE', 'LNDARE', 'UNSARE'].includes(String(feature.properties?.cm93Class ?? '')))
-        : cellFeatures;
       const cellScale = key.split('.').pop()?.toUpperCase() ?? 'A';
-      features.push(...renderableFeatures.map((feature) => ({
+      features.push(...cellFeatures.map((feature) => ({
         ...feature,
-        properties: { ...(feature.properties ?? {}), cm93SourceCell: key, cm93Scale: cellScale, ...(fillOnly ? { cm93FillFallback: true } : {}) },
+        properties: { ...(feature.properties ?? {}), cm93SourceCell: key, cm93Scale: cellScale },
       })));
       // Yield periodically so the UI can respond while a viewport quilt is built.
       if ((index + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -911,7 +902,8 @@ export default function App() {
     // Do not reuse a prior zoom's features when selected cells fail to decode
     // or contain no usable geometry. That creates stale overlays and makes the
     // chart depend on navigation history.
-    const quiltFeatures = buildCm93QuiltFeatures(features);
+    const coverageQuilt = buildCm93CoverageQuiltFeatures(features, selection.scale);
+    const quiltFeatures = buildCm93QuiltFeatures(coverageQuilt.features);
     if (quiltFeatures.length === 0) {
       const source = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
       source?.setData?.({ type: 'FeatureCollection', features: [] } as never);
@@ -1005,7 +997,8 @@ export default function App() {
       '-scale and coarser underlay cells, ' + features.length.toLocaleString() + ' current features (' + decoded +
       ' newly decoded, ' + (selection.files.length + selection.fillFallbackFiles.length - decoded - failed) + ' from cache); ' +
       underlayCellCount + ' coarser-scale underlay cells; ' + emptyCells + ' empty cells.' +
-      (failed ? ' ' + failed + ' cells failed to decode: ' + failedCellNames.slice(0, 5).join(', ') + (failedCellNames.length > 5 ? ', …' : '') + '.' : ''));
+      (failed ? ' ' + failed + ' cells failed to decode: ' + failedCellNames.slice(0, 5).join(', ') + (failedCellNames.length > 5 ? ', …' : '') + '.' : '') +
+      (coverageQuilt.warnings.length ? ' Coverage warnings: ' + coverageQuilt.warnings.join(' ') : ''));
   }, []);
 
   useEffect(() => {
