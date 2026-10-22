@@ -19,6 +19,14 @@ test('coverage containment respects polygon holes and boundaries', () => {
   assert.equal(cm93PointInCoverage([2, 5], coverage), false, 'hole boundary belongs to the hole');
 });
 
+test('does not render a scale whose cells have no decoded M_COVR coverage', () => {
+  const result = buildCm93CoverageQuiltFeatures([
+    feature('DEPARE', 'E', { type: 'Polygon', coordinates: [ring(0, 0, 10, 10)] }),
+  ], 'E');
+  assert.deepEqual(result.features, []);
+  assert.deepEqual(result.coverageByScale, {});
+});
+
 test('allocates M_COVR regions from detailed to coarse and clips all geometry types', () => {
   const features = [
     feature('_m_sor', 'D', { type: 'Polygon', coordinates: [ring(0, 0, 10, 10)] }),
