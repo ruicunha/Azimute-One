@@ -53,12 +53,12 @@ function totalLineLength(geometry) {
 }
 
 const fixture = [
-  feature('_M_SOR', 'F', { type: 'Polygon', coordinates: [subdividedRing(0, 0, 10, 10)] }),
-  feature('_M_SOR', 'E', { type: 'Polygon', coordinates: [subdividedRing(2, 2, 8, 8)] }),
-  feature('DEPARE', 'F', { type: 'Polygon', coordinates: [subdividedRing(-1, -1, 11, 11)] }, { id: 'coarse-area' }),
-  feature('DEPARE', 'E', { type: 'Polygon', coordinates: [subdividedRing(1, 1, 9, 9)] }, { id: 'fine-area' }),
-  feature('DEPCNT', 'F', { type: 'LineString', coordinates: [[-1, 5], [11, 5]] }, { id: 'coarse-contour' }),
-  feature('DEPCNT', 'E', { type: 'LineString', coordinates: [[-1, 3], [11, 3]] }, { id: 'fine-contour' }),
+  feature('_M_SOR', 'E', { type: 'Polygon', coordinates: [subdividedRing(0, 0, 10, 10)] }),
+  feature('_M_SOR', 'F', { type: 'Polygon', coordinates: [subdividedRing(2, 2, 8, 8)] }),
+  feature('DEPARE', 'E', { type: 'Polygon', coordinates: [subdividedRing(-1, -1, 11, 11)] }, { id: 'coarse-area' }),
+  feature('DEPARE', 'F', { type: 'Polygon', coordinates: [subdividedRing(1, 1, 9, 9)] }, { id: 'fine-area' }),
+  feature('DEPCNT', 'E', { type: 'LineString', coordinates: [[-1, 5], [11, 5]] }, { id: 'coarse-contour' }),
+  feature('DEPCNT', 'F', { type: 'LineString', coordinates: [[-1, 3], [11, 3]] }, { id: 'fine-contour' }),
 ];
 
 test('both CM93 clipping engines produce equivalent coverage and clipped geometry', () => {
