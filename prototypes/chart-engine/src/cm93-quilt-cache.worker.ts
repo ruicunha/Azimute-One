@@ -9,6 +9,7 @@ type CacheEntry = {
   sizeBytes: number;
 };
 type RequestMessage =
+  | { id: number; type: 'lookup'; key: string }
   | { id: number; type: 'build'; key: string; features: GeoJSON.Feature[]; scale: Cm93ScaleCode; engine: Cm93PolygonClippingEngine }
   | { id: number; type: 'clear' };
 
@@ -56,9 +57,6 @@ async function getTelemetry(): Promise<CacheTelemetry> {
 }
 
 function estimateSizeBytes(value: unknown): number {
-  // IndexedDB stores structured-clone data, so the JSON UTF-8 size is an
-  // estimate rather than an exact measurement. It provides a consistent
-  // budget for comparing entries without relying on browser-specific quotas.
   const serialized = JSON.stringify(value);
   return new TextEncoder().encode(serialized ?? 'null').byteLength;
 }
@@ -72,10 +70,6 @@ function openDatabase(): Promise<IDBDatabase> {
       if (!database.objectStoreNames.contains(STORE_NAME)) {
         database.createObjectStore(STORE_NAME, { keyPath: 'key' });
       }
-
-      // Upgrade the previous four-entry cache in place. Existing entries are
-      // retained, assigned estimated sizes, and ordered by their previous save
-      // time until real accesses establish the new LRU order.
       if ((event as IDBVersionChangeEvent).oldVersion < 2 && transaction) {
         const store = transaction.objectStore(STORE_NAME);
         const cursorRequest = store.openCursor();
@@ -128,10 +122,7 @@ async function readEntry(key: string): Promise<unknown | null> {
 
 async function writeEntry(key: string, value: unknown): Promise<boolean> {
   const sizeBytes = estimateSizeBytes(value);
-  // A single quilt larger than the entire budget is useful for this render,
-  // but should not be persisted because it would immediately evict everything.
   if (sizeBytes > CACHE_BUDGET_BYTES) { counters.skippedOversized++; return false; }
-
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -139,20 +130,14 @@ async function writeEntry(key: string, value: unknown): Promise<boolean> {
       const store = transaction.objectStore(STORE_NAME);
       const now = Date.now();
       store.put({ key, value, savedAt: now, lastAccessedAt: now, sizeBytes } satisfies CacheEntry);
-
       const entriesRequest = store.getAll() as IDBRequest<CacheEntry[]>;
       entriesRequest.onsuccess = () => {
         const entries = entriesRequest.result;
         let totalBytes = entries.reduce((total, entry) =>
           total + (typeof entry.sizeBytes === 'number' ? entry.sizeBytes : estimateSizeBytes(entry.value)), 0);
-
-        // Least-recently-used eviction: accesses update lastAccessedAt, so the
-        // oldest entry is removed first until the estimated payload is within
-        // the 250 MiB budget. Keep the newly written entry whenever possible.
         const oldestFirst = entries
           .filter((entry) => entry.key !== key)
           .sort((a, b) => (a.lastAccessedAt ?? a.savedAt ?? 0) - (b.lastAccessedAt ?? b.savedAt ?? 0));
-
         for (const entry of oldestFirst) {
           if (totalBytes <= CACHE_BUDGET_BYTES) break;
           store.delete(entry.key);
@@ -171,37 +156,38 @@ async function writeEntry(key: string, value: unknown): Promise<boolean> {
   }
 }
 
-async function buildOrRead(request: Extract<RequestMessage, { type: 'build' }>) {
+async function lookup(request: Extract<RequestMessage, { type: 'lookup' }>) {
   let cached: unknown | null = null;
   try {
     cached = await readEntry(request.key);
   } catch {
-    // A failed cache read falls back to building the quilt in this worker.
     counters.readErrors++;
   }
   if (cached) {
     counters.hits++;
-    // Do not scan and structured-clone the entire persistent cache on every
-    // hit. Entries can total hundreds of MiB; reading all of them for telemetry
-    // made the supposedly fast path expensive. Reuse the last storage snapshot
-    // and refresh only the session counters. Storage size is refreshed on a
-    // cache miss/write, when the extra diagnostic work is less intrusive.
+    // The persistent-size snapshot is expensive because IndexedDB returns
+    // full stored values. Take it at most once per worker session, never on
+    // subsequent hits. The main hot-path optimization is that lookup requests
+    // carry only the key, not the decoded feature array.
     if (!lastTelemetry) {
-      // Populate the initial storage snapshot once per worker session so the
-      // diagnostics panel remains useful after a page reload. Subsequent hits
-      // never rescan the full cache.
-      try { await getTelemetry(); } catch { /* Stats are diagnostic only. */ }
+      try { await getTelemetry(); } catch { /* Statistics must not block rendering. */ }
     }
-    const telemetry = lastTelemetry ? { ...lastTelemetry, ...counters } : undefined;
-    return { value: cached, cacheHit: true, telemetry };
+    return {
+      cacheHit: true,
+      value: cached,
+      telemetry: lastTelemetry ? { ...lastTelemetry, ...counters } : undefined,
+    };
   }
 
   counters.misses++;
+  return { cacheHit: false };
+}
+
+async function build(request: Extract<RequestMessage, { type: 'build' }>) {
   const value = buildCm93CoverageQuiltFeatures(request.features, request.scale, request.engine);
   try {
     if (await writeEntry(request.key, value)) counters.writes++;
   } catch {
-    // Quota/storage failures must not prevent chart rendering.
     counters.writeErrors++;
   }
   let telemetry: CacheTelemetry | undefined;
@@ -217,20 +203,22 @@ const workerScope = self as unknown as {
 workerScope.addEventListener('message', (event: MessageEvent<RequestMessage>) => {
   const request = event.data;
   const reply = (ok: boolean, value?: unknown, error?: string) => workerScope.postMessage({ id: request.id, ok, value, error });
-  const operation = request.type === 'build'
-    ? buildOrRead(request).then((value) => reply(true, value))
-    : openDatabase().then(async (database) => {
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const transaction = database.transaction(STORE_NAME, 'readwrite');
-          transaction.objectStore(STORE_NAME).clear();
-          transaction.oncomplete = () => resolve();
-          transaction.onerror = () => reject(transaction.error);
-        });
-        reply(true);
-      } finally {
-        database.close();
-      }
-    });
+  const operation = request.type === 'lookup'
+    ? lookup(request).then((value) => reply(true, value))
+    : request.type === 'build'
+      ? build(request).then((value) => reply(true, value))
+      : openDatabase().then(async (database) => {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const transaction = database.transaction(STORE_NAME, 'readwrite');
+            transaction.objectStore(STORE_NAME).clear();
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+          });
+          reply(true);
+        } finally {
+          database.close();
+        }
+      });
   void operation.catch((error: unknown) => reply(false, undefined, error instanceof Error ? error.message : String(error)));
 });

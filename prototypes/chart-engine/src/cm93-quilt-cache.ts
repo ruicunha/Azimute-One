@@ -15,6 +15,7 @@ export type Cm93CacheTelemetry = {
 };
 
 type WorkerReply = { id: number; ok: boolean; value?: unknown; error?: string };
+type WorkerRequest = { id: number; type: string; [key: string]: unknown };
 type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error) => void };
 let worker: Worker | null = null;
 let nextId = 1;
@@ -45,22 +46,13 @@ function getWorker(): Worker | null {
   return worker;
 }
 
-function buildRequest(
-  key: string,
-  features: GeoJSON.Feature[],
-  scale: Cm93ScaleCode,
-  engine: Cm93PolygonClippingEngine,
-): Promise<unknown> {
-  const activeWorker = getWorker();
-  if (!activeWorker) {
-    // The worker is optional. Returning null signals the caller to use the
-    // existing synchronous CPU path when Web Workers or IndexedDB are absent.
-    return Promise.resolve(null);
-  }
+function sendRequest(activeWorker: Worker, message: Omit<WorkerRequest, 'id'>): Promise<unknown> {
   const id = nextId++;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    activeWorker.postMessage({ id, type: 'build', key, features, scale, engine });
+    // Cache lookup deliberately sends only the key. Decoded GeoJSON is sent
+    // in a separate build request only after the worker confirms a miss.
+    activeWorker.postMessage({ ...message, id });
   });
 }
 
@@ -70,8 +62,19 @@ export async function getOrBuildCm93CachedQuilt<T>(
   scale: Cm93ScaleCode,
   engine: Cm93PolygonClippingEngine,
 ): Promise<{ value: T; cacheHit: boolean; telemetry?: Cm93CacheTelemetry } | null> {
+  const activeWorker = getWorker();
+  if (!activeWorker) return null;
+
   try {
-    return await buildRequest(key, features, scale, engine) as { value: T; cacheHit: boolean } | null;
+    const lookup = await sendRequest(activeWorker, { type: 'lookup', key }) as
+      | { value: T; cacheHit: true; telemetry?: Cm93CacheTelemetry }
+      | { cacheHit: false; telemetry?: Cm93CacheTelemetry };
+    if (lookup.cacheHit) return lookup as { value: T; cacheHit: boolean; telemetry?: Cm93CacheTelemetry };
+
+    // Only cold/missing entries transfer decoded features to the worker.
+    // This avoids structured-cloning thousands of GeoJSON features on every hit.
+    return await sendRequest(activeWorker, { type: 'build', key, features, scale, engine }) as
+      { value: T; cacheHit: boolean; telemetry?: Cm93CacheTelemetry };
   } catch {
     // Worker/cache failures fall back to the original CPU processing path.
     return null;
