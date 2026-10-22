@@ -12,6 +12,11 @@ import {
 import { selectCm93ViewportCells } from '../src/cm93-quilt.ts';
 import { buildCm93CoverageQuiltFeatures } from '../src/cm93-quilt-geometry.ts';
 
+const [currentPackage, alternativePackage] = await Promise.all([
+  readFile(new URL('../node_modules/polygon-clipping/package.json', import.meta.url), 'utf8').then(JSON.parse),
+  readFile(new URL('../node_modules/martinez-polygon-clipping/package.json', import.meta.url), 'utf8').then(JSON.parse),
+]);
+
 const datasetPath = process.env.CM93_ZIP ?? '.benchmark/cm93_200705_Small.zip';
 const outputPath = process.env.CM93_BENCHMARK_OUTPUT ?? '.benchmark/polygon-clipping-benchmark.json';
 const viewport = {
@@ -226,8 +231,8 @@ const report = {
   benchmark: {
     polygonCaseCount: polygonCases.length,
     repetitions,
-    current: { library: 'polygon-clipping', elapsedMs: currentRuns.map((run) => Number(run.elapsedMs.toFixed(3))), medianMs: Number(currentMedian.toFixed(3)), errors: currentReference.errors, emptyResults: currentReference.emptyResults },
-    alternative: { library: 'martinez-polygon-clipping', elapsedMs: alternativeRuns.map((run) => Number(run.elapsedMs.toFixed(3))), medianMs: Number(alternativeMedian.toFixed(3)), errors: alternativeReference.errors, emptyResults: alternativeReference.emptyResults },
+    current: { library: 'polygon-clipping', version: currentPackage.version, elapsedMs: currentRuns.map((run) => Number(run.elapsedMs.toFixed(3))), medianMs: Number(currentMedian.toFixed(3)), errors: currentReference.errors, emptyResults: currentReference.emptyResults },
+    alternative: { library: 'martinez-polygon-clipping', version: alternativePackage.version, elapsedMs: alternativeRuns.map((run) => Number(run.elapsedMs.toFixed(3))), medianMs: Number(alternativeMedian.toFixed(3)), errors: alternativeReference.errors, emptyResults: alternativeReference.emptyResults },
     speedup: Number((currentMedian / alternativeMedian).toFixed(3)),
     geometryComparison: {
       comparedFeatureCount: compared,
