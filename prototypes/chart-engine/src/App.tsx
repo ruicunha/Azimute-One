@@ -1138,6 +1138,49 @@ export default function App() {
               {cm93QuiltStats.failed > 0 && <li>Decode failures: {cm93QuiltStats.failed}</li>}
               {cm93QuiltStats.classes.length > 0 && <li>Most common classes: {cm93QuiltStats.classes.join('; ')}</li>}
             </ul>
+            <button className="secondary-button" type="button" onClick={() => {
+              const map = mapRef.current;
+              const bounds = map?.getBounds();
+              const center = map?.getCenter();
+              const clickReport = cm93ClickDebug ? (() => {
+                try { return JSON.parse(cm93ClickDebug); } catch { return cm93ClickDebug; }
+              })() : null;
+              const report = {
+                reportType: 'Azimute One CM93 performance diagnostics',
+                capturedAt: new Date().toISOString(),
+                performance: {
+                  timingsMs: cm93QuiltStats.timings ?? null,
+                  targetScaleAndCellMix: cm93QuiltStats.scale,
+                  viewportCellCount: cm93QuiltStats.cells,
+                  renderedFeatureCount: cm93QuiltStats.features,
+                  decodedCellCacheSize: cm93QuiltStats.cached,
+                  decodeFailureCount: cm93QuiltStats.failed,
+                  mostCommonClasses: cm93QuiltStats.classes,
+                },
+                viewport: map && bounds && center ? {
+                  zoom: Number(map.getZoom().toFixed(3)),
+                  center: { latitude: Number(center.lat.toFixed(6)), longitude: Number(center.lng.toFixed(6)) },
+                  bounds: {
+                    west: Number(bounds.getWest().toFixed(6)),
+                    south: Number(bounds.getSouth().toFixed(6)),
+                    east: Number(bounds.getEast().toFixed(6)),
+                    north: Number(bounds.getNorth().toFixed(6)),
+                  },
+                } : null,
+                dataset: cm93Summary ? {
+                  fileCount: cm93Summary.fileCount,
+                  regionCount: cm93Summary.regionCount,
+                  scales: cm93Summary.scales.map(({ code, fileCount }) => ({ code, fileCount })),
+                } : null,
+                lastMapClickDiagnostic: clickReport,
+                testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. Include zoom-transition runs where detail appears late.',
+              };
+              void navigator.clipboard?.writeText(JSON.stringify(report, null, 2)).then(() => {
+                setMessage('CM93 performance diagnostics copied. Repeat for cold-cache and warm-cache runs.');
+              }).catch(() => {
+                setMessage('Clipboard access failed. Allow clipboard access for this site and try again.');
+              });
+            }}>Copy performance diagnostics (JSON)</button>
           </div>}
           {cm93Summary && <div className="legend cm93-summary">
             <span className="field-label">CM93 DATASET INVENTORY</span>
