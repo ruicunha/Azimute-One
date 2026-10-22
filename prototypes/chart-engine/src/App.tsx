@@ -10,7 +10,7 @@ import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm9
 import { buildCm93QuiltFeatures, selectCm93ViewportCells, type Cm93ScaleCode } from './cm93-quilt';
 import { buildCm93CoverageQuiltFeatures, cm93PointInCoverage, type Cm93MultiPolygonCoordinates, type Cm93PolygonClippingEngine } from './cm93-quilt-geometry';
 import { benchmarkCm93WebGpuPolygonCandidates, type Cm93WebGpuCandidateBenchmark } from './cm93-webgpu';
-import { cm93QuiltCacheKey, getCm93CachedQuilt, setCm93CachedQuilt } from './cm93-quilt-cache';
+import { cm93QuiltCacheKey, getOrBuildCm93CachedQuilt } from './cm93-quilt-cache';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -963,34 +963,22 @@ export default function App() {
     cm93RawFeaturesRef.current = features;
     const quiltStartedAt = performance.now();
     const cacheKey = cm93QuiltCacheKey(selection.scale, cm93ClippingEngine, selectedForRendering.map(({ file }) => file));
-    type CachedQuilt = {
-      coverageFeatures: typeof features;
-      coverageByScale: Partial<Record<Cm93ScaleCode, Cm93MultiPolygonCoordinates>>;
-      metrics: ReturnType<typeof buildCm93CoverageQuiltFeatures>['metrics'];
-    };
-    const cachedQuilt = await getCm93CachedQuilt<CachedQuilt>(cacheKey);
+    const workerResult = await getOrBuildCm93CachedQuilt<ReturnType<typeof buildCm93CoverageQuiltFeatures>>(
+      cacheKey,
+      features as GeoJSON.Feature[],
+      selection.scale,
+      cm93ClippingEngine,
+    );
     if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
-    const cacheHit = cachedQuilt !== null;
-    const coverageQuilt = cachedQuilt
-      ? {
-          features: cachedQuilt.coverageFeatures,
-          coverageByScale: cachedQuilt.coverageByScale,
-          metrics: cachedQuilt.metrics,
-        }
-      : buildCm93CoverageQuiltFeatures(features, selection.scale, cm93ClippingEngine);
+    // The worker performs the expensive geometry operation and persists the
+    // processed result in IndexedDB. If workers/storage are unavailable, retain
+    // the original synchronous implementation as a safe fallback.
+    const cacheHit = workerResult?.cacheHit ?? false;
+    const coverageQuilt = workerResult?.value
+      ?? buildCm93CoverageQuiltFeatures(features, selection.scale, cm93ClippingEngine);
     cm93CoverageByScaleRef.current = coverageQuilt.coverageByScale;
     const quiltFeatures = buildCm93QuiltFeatures(coverageQuilt.features);
     const quiltMs = performance.now() - quiltStartedAt;
-    if (!cacheHit) {
-      // Persist only the expensive, geometry-processed quilt result. Decoded
-      // cell features remain in the in-memory LRU cache; raw cell bytes are
-      // never copied into persistent browser storage.
-      void setCm93CachedQuilt(cacheKey, {
-        coverageFeatures: coverageQuilt.features,
-        coverageByScale: coverageQuilt.coverageByScale,
-        metrics: coverageQuilt.metrics,
-      });
-    }
     if (quiltFeatures.length === 0) {
       cm93CoverageByScaleRef.current = {};
       cm93WebGpuBenchmarkScaleRef.current = null;
