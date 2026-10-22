@@ -138,18 +138,16 @@ export function selectCm93ViewportCells(
 
 
 /**
- * Keep previous-scale features for cells not represented by the current
- * selection. A selected cell replaces its prior version; an unselected cell
- * remains as a fallback when a finer scale has no usable information.
+ * Build a quilt exclusively from cells selected for the current viewport.
+ *
+ * Previous-render features are intentionally not merged here: cell selection
+ * already chooses coarser cells where a target-grid cell is missing. Retaining
+ * arbitrary features from the previous viewport/scale makes the result depend
+ * on navigation history and creates stale overlays. Exact coverage clipping
+ * still requires decoded CM93 coverage polygons and is not claimed here.
  */
-export function mergeCm93QuiltFeatures(
+export function buildCm93QuiltFeatures(
   currentFeatures: GeoJSON.Feature[],
-  previousFeatures: GeoJSON.Feature[],
-  selectedCellKeys: Set<string>,
 ): GeoJSON.Feature[] {
-  const fallback = previousFeatures.filter((feature) => {
-    const sourceCell = feature.properties?.cm93SourceCell;
-    return typeof sourceCell === 'string' && !selectedCellKeys.has(sourceCell);
-  });
-  return [...currentFeatures, ...fallback];
+  return currentFeatures;
 }
