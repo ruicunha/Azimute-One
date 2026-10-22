@@ -1,0 +1,48 @@
+name: CM93 polygon clipping benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install chart-engine dependencies
+        working-directory: prototypes/chart-engine
+        run: npm install
+
+      - name: Install benchmark-only alternative
+        working-directory: prototypes/chart-engine
+        run: npm install --no-save martinez-polygon-clipping@0.9.0
+
+      - name: Download public CM93 sample dataset
+        working-directory: prototypes/chart-engine
+        run: |
+          mkdir -p .benchmark
+          curl --fail --location --retry 3 --output .benchmark/cm93_200705_Small.zip https://charts.sailingamazinggrace.com/CM93/cm93_200705_Small.zip
+          ls -lh .benchmark/cm93_200705_Small.zip
+
+      - name: Benchmark current and alternative polygon clipping
+        working-directory: prototypes/chart-engine
+        run: node --experimental-strip-types scripts/benchmark-cm93-polygon-clipping.mjs
+
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cm93-polygon-clipping-benchmark
+          path: prototypes/chart-engine/.benchmark/polygon-clipping-benchmark.json
+          if-no-files-found: warn
+          retention-days: 14
