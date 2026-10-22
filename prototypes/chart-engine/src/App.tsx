@@ -227,6 +227,10 @@ export default function App() {
   const cm93FilesRef = useRef<File[]>([]);
   const cm93DictionaryRef = useRef<Cm93Dictionary | null>(null);
   const cm93DecodedCacheRef = useRef(new Map<string, ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>());
+  // Keep only the most recently used processed quilt in memory. IndexedDB hits
+  // still require a large structured clone back from the worker; this avoids
+  // that cost when the viewport resolves to the same set of CM93 cells.
+  const cm93CoverageQuiltCacheRef = useRef<{ key: string; value: ReturnType<typeof buildCm93CoverageQuiltFeatures> } | null>(null);
   const cm93RenderedFeaturesRef = useRef<ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>([]);
   const cm93RawFeaturesRef = useRef<ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>([]);
   const cm93CoverageByScaleRef = useRef<Partial<Record<Cm93ScaleCode, Cm93MultiPolygonCoordinates>>>({});
@@ -973,7 +977,13 @@ export default function App() {
     const cacheKey = cm93QuiltCacheKey(selection.scale, cm93ClippingEngine, cacheFiles);
     // Never persist a quilt assembled from a partially failed cell decode;
     // a later successful decode must be allowed to produce a complete result.
-    const workerResult = failed === 0
+    const memoryCachedQuilt = failed === 0 && cm93CoverageQuiltCacheRef.current?.key === cacheKey
+      ? cm93CoverageQuiltCacheRef.current.value
+      : null;
+    // Prefer the same-session in-memory result before asking the worker/IndexedDB.
+    // A persistent hit returns thousands of GeoJSON features through structured
+    // cloning, which can dominate a warm render even though clipping is avoided.
+    const workerResult = failed === 0 && !memoryCachedQuilt
       ? await getOrBuildCm93CachedQuilt<ReturnType<typeof buildCm93CoverageQuiltFeatures>>(
           cacheKey,
           features as GeoJSON.Feature[],
@@ -985,11 +995,15 @@ export default function App() {
     // The worker performs the expensive geometry operation and persists the
     // processed result in IndexedDB. If workers/storage are unavailable, retain
     // the original synchronous implementation as a safe fallback.
-    const cacheHit = workerResult?.cacheHit ?? false;
-    if (failed === 0 && !workerResult) setCm93CacheFallbacks((count) => count + 1);
+    const cacheHit = Boolean(memoryCachedQuilt) || (workerResult?.cacheHit ?? false);
+    if (failed === 0 && !workerResult && !memoryCachedQuilt) setCm93CacheFallbacks((count) => count + 1);
     if (workerResult?.telemetry) setCm93CacheTelemetry(workerResult.telemetry);
-    const coverageQuilt = workerResult?.value
+    const coverageQuilt = memoryCachedQuilt
+      ?? workerResult?.value
       ?? buildCm93CoverageQuiltFeatures(features, selection.scale, cm93ClippingEngine);
+    if (failed === 0 && !memoryCachedQuilt) {
+      cm93CoverageQuiltCacheRef.current = { key: cacheKey, value: coverageQuilt };
+    }
     cm93CoverageByScaleRef.current = coverageQuilt.coverageByScale;
     const quiltFeatures = buildCm93QuiltFeatures(coverageQuilt.features);
     const quiltMs = performance.now() - quiltStartedAt;
