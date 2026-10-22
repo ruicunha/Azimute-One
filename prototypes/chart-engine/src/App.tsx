@@ -7,8 +7,8 @@ import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-c
 import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
 import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
-import { buildCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt';
-import { buildCm93CoverageQuiltFeatures } from './cm93-quilt-geometry';
+import { buildCm93QuiltFeatures, selectCm93ViewportCells, type Cm93ScaleCode } from './cm93-quilt';
+import { buildCm93CoverageQuiltFeatures, cm93PointInCoverage, type Cm93MultiPolygonCoordinates } from './cm93-quilt-geometry';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -226,6 +226,7 @@ export default function App() {
   const cm93DictionaryRef = useRef<Cm93Dictionary | null>(null);
   const cm93DecodedCacheRef = useRef(new Map<string, ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>());
   const cm93RenderedFeaturesRef = useRef<ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>([]);
+  const cm93CoverageByScaleRef = useRef<Partial<Record<Cm93ScaleCode, Cm93MultiPolygonCoordinates>>>({});
   const cm93QuiltRequestRef = useRef(0);
   const cm93AutoEnabledRef = useRef(false);
   const cm93OverviewScaleRef = useRef<string | null>(null);
@@ -348,6 +349,12 @@ export default function App() {
         })
         : [];
       const selectedCells = [...(selection?.files ?? []), ...(selection?.fillFallbackFiles ?? [])];
+      const effectiveCoverageAtClickByScale = Object.entries(cm93CoverageByScaleRef.current)
+        .map(([scale, coverage]) => ({
+          scale,
+          containsClick: Boolean(coverage?.length && cm93PointInCoverage([click.longitude, click.latitude], coverage)),
+        }));
+      const effectiveScaleAtClick = effectiveCoverageAtClickByScale.find((entry) => entry.containsClick)?.scale ?? null;
       const report = {
         reportType: 'Azimute One CM93 map-click diagnostic',
         capturedAt: new Date().toISOString(),
@@ -357,6 +364,8 @@ export default function App() {
           directoryLoaded: files.length > 0,
           automaticDetailEnabled: cm93AutoEnabledRef.current,
           requestedScale: selection?.scale ?? null,
+          effectiveScaleAtClick,
+          effectiveCoverageAtClickByScale,
           selectedCellCount: selectedCells.length,
           selectedScaleCounts: selection?.scaleCounts ?? {},
           selectedFillFallbackCellCount: selection?.fillFallbackFiles.length ?? 0,
@@ -381,6 +390,7 @@ export default function App() {
         notes: [
           'Selected-cell paths are filename/grid-based candidates; decoded M_COVR coverage determines which scale renders at each location.',
           'Each scale is clipped to its allocated coverage region; coarser scales fill only regions not covered by more detailed scales.',
+          'effectiveScaleAtClick reports which allocated M_COVR region owns the clicked coordinate; null means no selected scale covers that point.',
           'A null cachedDecodedFeatureCount means that cell is not currently in the decoded cache.',
           'Rendered features are only features MapLibre reports at the clicked pixel and may be empty if no CM93 layer is visible there.',
         ],
@@ -553,6 +563,7 @@ export default function App() {
       cm93QuiltRequestRef.current++;
       cm93DecodedCacheRef.current.clear();
       cm93RenderedFeaturesRef.current = [];
+      cm93CoverageByScaleRef.current = {};
       cm93OverviewScaleRef.current = null;
       setCm93QuiltStats(null);
       if (mapRef.current) {
@@ -837,6 +848,7 @@ export default function App() {
       const source = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
       source?.setData?.({ type: 'FeatureCollection', features: [] } as never);
       cm93RenderedFeaturesRef.current = [];
+      cm93CoverageByScaleRef.current = {};
       setCm93QuiltStats({
         scale: selection.scale,
         cells: 0,
@@ -903,11 +915,13 @@ export default function App() {
     // or contain no usable geometry. That creates stale overlays and makes the
     // chart depend on navigation history.
     const coverageQuilt = buildCm93CoverageQuiltFeatures(features, selection.scale);
+    cm93CoverageByScaleRef.current = coverageQuilt.coverageByScale;
     const quiltFeatures = buildCm93QuiltFeatures(coverageQuilt.features);
     if (quiltFeatures.length === 0) {
       const source = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
       source?.setData?.({ type: 'FeatureCollection', features: [] } as never);
       cm93RenderedFeaturesRef.current = [];
+      cm93CoverageByScaleRef.current = {};
       setStatus('ready');
       setMessage('No usable features in the currently selected CM93 cells at scale ' + selection.scale + '. Previous-scale features were cleared to avoid stale overlays.');
       return;
@@ -1019,6 +1033,7 @@ export default function App() {
       if (mapRef.current) clearCm93Quilt(mapRef.current);
       setCm93QuiltStats(null);
       cm93RenderedFeaturesRef.current = [];
+      cm93CoverageByScaleRef.current = {};
       setMessage('Automatic CM93 detail loading disabled. The existing overview and manual cell rendering remain available.');
     } else {
       void syncCm93Quilt();
