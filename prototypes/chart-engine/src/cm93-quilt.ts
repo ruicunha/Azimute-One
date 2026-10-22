@@ -1,12 +1,10 @@
 /**
  * Viewport-aware CM93 V2 cell selection for the experimental chart quilt.
  *
- * The viewport prefers the requested scale. For the one-degree E/F/G grids,
- * a missing target cell may use the next available finer cell in that same
- * footprint. This avoids blank tiles without layering unrelated coarser
- * chart polygons over finer data. Coarser fallback remains viewport-wide
- * because those cells span multiple fine-grid footprints and require M_COVR
- * coverage geometry before they can be safely mixed.
+ * The viewport selects the requested scale plus coarser candidates. A separate
+ * coverage-aware quilt stage uses decoded M_COVR polygons to allocate each
+ * geographic region to the most detailed available scale and clips features
+ * to that region. Filename/grid membership alone never grants render coverage.
  */
 export type Cm93CellFile = {
   name: string;
@@ -61,11 +59,11 @@ function pathForCell(latitudeCell: number, longitudeCell: number, scale: string)
 }
 
 export type Cm93ViewportSelection = {
-  /** Scale requested by the current zoom; per-cell fine fallback may be present. */
+  /** Scale requested by the current zoom; coverage decides the visible scale per location. */
   scale: Cm93ScaleCode;
-  /** Primary cells selected at the requested scale, or coarser fallback scale. */
+  /** Requested-scale and coarser candidate cells, ordered from detailed to coarse. */
   files: Cm93CellFile[];
-  /** Finer E/F/G cells used only for area fills, never points or lines. */
+  /** Kept empty for compatibility; fine-scale fallback is intentionally disabled. */
   fillFallbackFiles: Cm93CellFile[];
   scaleCounts: Partial<Record<Cm93ScaleCode, number>>;
 };
@@ -89,7 +87,12 @@ export function selectCm93ViewportCells(
   const west = Math.min(bounds.west, bounds.east);
   const east = Math.max(bounds.west, bounds.east);
   const longitudeSpan = Math.min(360, Math.max(0, east - west));
+  const selected = new Map<string, Cm93CellFile>();
 
+  // Like OpenCPN's CM93 quilt, gather the requested scale and progressively
+  // smaller-scale (coarser) candidates. Coverage geometry, not filename-grid
+  // membership, decides which scale is actually visible at each location.
+  // Never substitute a finer cell for a missing requested-scale cell.
   for (let scaleIndex = targetIndex; scaleIndex >= 0; scaleIndex--) {
     const scale = CM93_SCALE_ORDER[scaleIndex];
     const step = CM93_SCALE_STEPS[scale];
@@ -97,25 +100,11 @@ export function selectCm93ViewportCells(
     const lastLatitudeCell = Math.floor((north * 3 + 240) / step) * step;
     const firstLongitudeCell = Math.floor((normalizedLongitude(west) * 3) / step) * step;
     const lastLongitudeCell = Math.floor((normalizedLongitude(west) * 3 + longitudeSpan * 3) / step) * step;
-    const selected = new Map<string, Cm93CellFile>();
 
     for (let latitudeCell = firstLatitudeCell; latitudeCell <= lastLatitudeCell; latitudeCell += step) {
       for (let longitudeCellUnwrapped = firstLongitudeCell; longitudeCellUnwrapped <= lastLongitudeCell; longitudeCellUnwrapped += step) {
         const longitudeCell = ((longitudeCellUnwrapped % 1080) + 1080) % 1080;
-        let found = byPath.get(pathForCell(latitudeCell, longitudeCell, scale));
-
-        // E/F/G use the same one-degree filename grid. If the requested tile
-        // is absent, use the next available finer tile in exactly that
-        // footprint, rather than concluding that other E tiles cover the gap.
-        if (!found && scale === targetScale && (targetScale === 'E' || targetScale === 'F')) {
-          const firstFineIndex = targetIndex + 1;
-          for (let fineIndex = firstFineIndex; fineIndex < CM93_SCALE_ORDER.length; fineIndex++) {
-            const finerScale = CM93_SCALE_ORDER[fineIndex];
-            found = byPath.get(pathForCell(latitudeCell, longitudeCell, finerScale));
-            if (found) break;
-          }
-        }
-
+        const found = byPath.get(pathForCell(latitudeCell, longitudeCell, scale));
         if (found) {
           const key = (found.webkitRelativePath || found.name).toLowerCase();
           if (!selected.has(key)) selected.set(key, found);
@@ -124,53 +113,23 @@ export function selectCm93ViewportCells(
       }
       if (selected.size >= maxCells) break;
     }
-
-    if (selected.size > 0) {
-      const scaleCounts: Partial<Record<Cm93ScaleCode, number>> = {};
-      for (const file of selected.values()) {
-        const actualScale = (file.webkitRelativePath || file.name).split('.').pop()?.toUpperCase() as Cm93ScaleCode;
-        scaleCounts[actualScale] = (scaleCounts[actualScale] ?? 0) + 1;
-      }
-
-      // Do not mix coarser-scale cells into a detailed quilt without applying
-      // their M_COVR coverage. Their polygons can extend across unrelated
-      // fine-scale coverage and create misleading broad fills. Fine-scale
-      // supplements remain limited to the same detailed grid footprint.
-      const fillFallbackFiles = new Map<string, Cm93CellFile>();
-      // Finer-grid cells may also contain useful area polygons where the
-      // requested-scale cell is missing. Keep those as fill-only supplements too.
-      if (targetIndex >= CM93_SCALE_ORDER.indexOf('D') && targetScale !== 'G') {
-        const fineScales = CM93_SCALE_ORDER.slice(Math.max(targetIndex + 1, CM93_SCALE_ORDER.indexOf('E'))).reverse();
-        const fineSouth = Math.max(-79.5, Math.min(bounds.south, bounds.north));
-        const fineNorth = Math.min(80, Math.max(bounds.south, bounds.north));
-        const fineWest = Math.min(bounds.west, bounds.east);
-        const fineEast = Math.max(bounds.west, bounds.east);
-        const fineLongitudeSpan = Math.min(360, Math.max(0, fineEast - fineWest));
-        const firstFineLatitudeCell = Math.floor(fineSouth * 3 + 240);
-        const lastFineLatitudeCell = Math.floor(fineNorth * 3 + 240);
-        const firstFineLongitudeCell = Math.floor(normalizedLongitude(fineWest) * 3);
-        const lastFineLongitudeCell = Math.floor(normalizedLongitude(fineWest) * 3 + fineLongitudeSpan * 3);
-
-        for (let latitudeCell = firstFineLatitudeCell; latitudeCell <= lastFineLatitudeCell; latitudeCell++) {
-          for (let longitudeCellUnwrapped = firstFineLongitudeCell; longitudeCellUnwrapped <= lastFineLongitudeCell; longitudeCellUnwrapped++) {
-            const longitudeCell = ((longitudeCellUnwrapped % 1080) + 1080) % 1080;
-            for (const fineScale of fineScales) {
-              const found = byPath.get(pathForCell(latitudeCell, longitudeCell, fineScale));
-              if (!found) continue;
-              const key = (found.webkitRelativePath || found.name).toLowerCase();
-              if (!selected.has(key)) fillFallbackFiles.set(key, found);
-              break;
-            }
-            if (selected.size + fillFallbackFiles.size >= maxCells) break;
-          }
-          if (selected.size + fillFallbackFiles.size >= maxCells) break;
-        }
-      }
-      return { scale: targetScale, files: [...selected.values()], fillFallbackFiles: [...fillFallbackFiles.values()], scaleCounts };
-    }
+    if (selected.size >= maxCells) break;
   }
 
-  return { scale: targetScale, files: [], fillFallbackFiles: [], scaleCounts: {} };
+  const scaleCounts: Partial<Record<Cm93ScaleCode, number>> = {};
+  for (const file of selected.values()) {
+    const actualScale = (file.webkitRelativePath || file.name).split('.').pop()?.toUpperCase() as Cm93ScaleCode;
+    scaleCounts[actualScale] = (scaleCounts[actualScale] ?? 0) + 1;
+  }
+
+  return {
+    scale: targetScale,
+    files: [...selected.values()],
+    // Retained for diagnostic/API compatibility. Fine-scale fill fallbacks
+    // are deliberately disabled; only M_COVR-aware coarse coverage can fill gaps.
+    fillFallbackFiles: [],
+    scaleCounts,
+  };
 }
 
 /** Do not retain features from previous viewports or zoom levels. */
