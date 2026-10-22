@@ -122,6 +122,8 @@ export async function benchmarkCm93WebGpuPolygonCandidates(
   }
 
   const setupStart = performance.now();
+  const bufferUsage = (globalThis as any).GPUBufferUsage ?? { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, STORAGE: 128 };
+  const mapMode = (globalThis as any).GPUMapMode ?? { READ: 1 };
   const adapter = await gpuProvider.requestAdapter();
   if (!adapter) throw new Error('WebGPU could not acquire a GPU adapter.');
   const device = await adapter.requestDevice();
@@ -155,19 +157,19 @@ export async function benchmarkCm93WebGpuPolygonCandidates(
   const coverageData = packBounds(componentBounds);
   const featureBuffer = device.createBuffer({
     size: featureData.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    usage: bufferUsage.STORAGE | bufferUsage.COPY_DST,
   });
   const coverageBuffer = device.createBuffer({
     size: coverageData.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    usage: bufferUsage.STORAGE | bufferUsage.COPY_DST,
   });
   const outputBuffer = device.createBuffer({
     size: pairCount * Uint32Array.BYTES_PER_ELEMENT,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    usage: bufferUsage.STORAGE | bufferUsage.COPY_SRC,
   });
   const readBuffer = device.createBuffer({
     size: pairCount * Uint32Array.BYTES_PER_ELEMENT,
-    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    usage: bufferUsage.COPY_DST | bufferUsage.MAP_READ,
   });
   device.queue.writeBuffer(featureBuffer, 0, featureData);
   device.queue.writeBuffer(coverageBuffer, 0, coverageData);
@@ -193,7 +195,7 @@ export async function benchmarkCm93WebGpuPolygonCandidates(
     pass.end();
     encoder.copyBufferToBuffer(outputBuffer, 0, readBuffer, 0, pairCount * Uint32Array.BYTES_PER_ELEMENT);
     device.queue.submit([encoder.finish()]);
-    await readBuffer.mapAsync(GPUMapMode.READ);
+    await readBuffer.mapAsync(mapMode.READ);
     const values = new Uint32Array(readBuffer.getMappedRange().slice(0));
     readBuffer.unmap();
     gpuTimes.push(performance.now() - start);
