@@ -247,7 +247,7 @@ export default function App() {
   const [cm93PointClassCounts, setCm93PointClassCounts] = useState<Array<{ name: string; count: number }>>([]);
   const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
   const visibleCm93PointClassesRef = useRef<string[]>([]);
-  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number } } | null>(null);
+  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number }; geometryMetrics?: import('./cm93-quilt-geometry').Cm93CoverageQuiltMetrics } | null>(null);
   const [cm93ClickDebug, setCm93ClickDebug] = useState<string | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
   const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; classes: string[]; attributes: string[]; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
@@ -1010,6 +1010,7 @@ export default function App() {
       failed,
       classes: classSummary,
       timings: { selectMs, decodeMs, quiltMs, sourceMs, totalMs },
+      geometryMetrics: coverageQuilt.metrics,
     });
     setStatus('ready');
     const underlayCellCount = selection.files.filter((file) => {
@@ -1135,6 +1136,8 @@ export default function App() {
               <li>Rendered features: {cm93QuiltStats.features.toLocaleString()}</li>
               <li>Decoded-cell cache: {cm93QuiltStats.cached} cells</li>
               {cm93QuiltStats.timings && <li>Last update timings: select {cm93QuiltStats.timings.selectMs.toFixed(1)} ms · decode {cm93QuiltStats.timings.decodeMs.toFixed(1)} ms · coverage/geometry {cm93QuiltStats.timings.quiltMs.toFixed(1)} ms · source update {cm93QuiltStats.timings.sourceMs.toFixed(1)} ms · total {cm93QuiltStats.timings.totalMs.toFixed(1)} ms</li>}
+              {cm93QuiltStats.geometryMetrics && <li>Quilt stages (ms): coverage collect {cm93QuiltStats.geometryMetrics.collectCoverageMs.toFixed(1)} · coverage allocation/union/difference {cm93QuiltStats.geometryMetrics.coverageAllocationMs.toFixed(1)} · prepare coverage {cm93QuiltStats.geometryMetrics.prepareCoverageMs.toFixed(1)} · feature bounds {cm93QuiltStats.geometryMetrics.featureBoundsMs.toFixed(1)} · point clipping {cm93QuiltStats.geometryMetrics.pointClipMs.toFixed(1)} · line clipping {cm93QuiltStats.geometryMetrics.lineClipMs.toFixed(1)} · polygon clipping {cm93QuiltStats.geometryMetrics.polygonClipMs.toFixed(1)}</li>}
+              {cm93QuiltStats.geometryMetrics && <li>Quilt work: {cm93QuiltStats.geometryMetrics.inputFeatureCount.toLocaleString()} input · {cm93QuiltStats.geometryMetrics.coverageFeatureCount} coverage · {cm93QuiltStats.geometryMetrics.boundsRejectedCount.toLocaleString()} bounds rejected · {cm93QuiltStats.geometryMetrics.coverageEdgeCount.toLocaleString()} coverage edges · {cm93QuiltStats.geometryMetrics.outputFeatureCount.toLocaleString()} output features</li>}
               {cm93QuiltStats.failed > 0 && <li>Decode failures: {cm93QuiltStats.failed}</li>}
               {cm93QuiltStats.classes.length > 0 && <li>Most common classes: {cm93QuiltStats.classes.join('; ')}</li>}
             </ul>
@@ -1150,6 +1153,7 @@ export default function App() {
                 capturedAt: new Date().toISOString(),
                 performance: {
                   timingsMs: cm93QuiltStats.timings ?? null,
+                  geometryMetrics: cm93QuiltStats.geometryMetrics ?? null,
                   targetScaleAndCellMix: cm93QuiltStats.scale,
                   viewportCellCount: cm93QuiltStats.cells,
                   renderedFeatureCount: cm93QuiltStats.features,
