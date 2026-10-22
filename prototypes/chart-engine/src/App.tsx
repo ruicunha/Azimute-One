@@ -346,7 +346,7 @@ export default function App() {
           };
         })
         : [];
-      const selectedCells = selection?.files ?? [];
+      const selectedCells = [...(selection?.files ?? []), ...(selection?.fillFallbackFiles ?? [])];
       const report = {
         reportType: 'Azimute One CM93 map-click diagnostic',
         capturedAt: new Date().toISOString(),
@@ -358,6 +358,7 @@ export default function App() {
           requestedScale: selection?.scale ?? null,
           selectedCellCount: selectedCells.length,
           selectedScaleCounts: selection?.scaleCounts ?? {},
+          selectedFillFallbackCellCount: selection?.fillFallbackFiles.length ?? 0,
           clickedPositionCell: clickedCell ? {
             path: clickedCell.webkitRelativePath || clickedCell.name,
             scale: ((clickedCell.webkitRelativePath || clickedCell.name).split('/').slice(-2, -1)[0] ?? '').toUpperCase(),
@@ -377,7 +378,8 @@ export default function App() {
           renderedFeatureCountAtClick: renderedFeatures.length,
         },
         notes: [
-          'Selected-cell paths are the current filename/grid-based candidates, not verified M_COVR coverage.',
+          'Selected-cell paths are filename/grid-based candidates, not verified M_COVR coverage.',
+          'Finer fill-fallback cells contribute area polygons only; points and lines remain at the primary scale.',
           'A null cachedDecodedFeatureCount means that cell is not currently in the decoded cache.',
           'Rendered features are only features MapLibre reports at the clicked pixel and may be empty if no CM93 layer is visible there.',
         ],
@@ -827,7 +829,7 @@ export default function App() {
       north: bounds.getNorth(),
     }, map.getZoom(), 1200);
 
-    if (selection.files.length === 0) {
+    if (selection.files.length === 0 && selection.fillFallbackFiles.length === 0) {
       // A prior quilt is not valid fallback for the current viewport: leaving
       // it mounted makes portrayal depend on pan/zoom history. Clear it when
       // no current cell (at any coarser fallback scale) is available.
@@ -850,16 +852,20 @@ export default function App() {
     }
 
     setStatus('loading');
-    setMessage('Loading CM93 ' + selection.scale + '-scale detail: ' + selection.files.length + ' viewport cells…');
+    setMessage('Loading CM93 ' + selection.scale + '-scale detail: ' + (selection.files.length + selection.fillFallbackFiles.length) + ' viewport cells…');
     const features: ReturnType<typeof cm93CellToGeoJSON>['geojson']['features'] = [];
     let failed = 0;
     let decoded = 0;
     let emptyCells = 0;
     const failedCellNames: string[] = [];
 
-    for (let index = 0; index < selection.files.length; index++) {
+    const selectedForRendering = [
+      ...selection.files.map((file) => ({ file, fillOnly: false })),
+      ...selection.fillFallbackFiles.map((file) => ({ file, fillOnly: true })),
+    ];
+    for (let index = 0; index < selectedForRendering.length; index++) {
       if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
-      const file = selection.files[index];
+      const { file, fillOnly } = selectedForRendering[index];
       const key = (file.webkitRelativePath || file.name).toLowerCase();
       let cellFeatures = cm93DecodedCacheRef.current.get(key);
       if (cellFeatures) {
@@ -885,13 +891,17 @@ export default function App() {
       }
       if (!cellFeatures) continue;
       if (cellFeatures.length === 0) emptyCells++;
-      // Tag each feature with its source cell. When a finer cell has no usable
-      // information, this lets the next quilt retain older-scale features from
-      // cells that are not covered by the new selection instead of blanking them.
+      // Fine fallback cells only contribute area polygons. Their point and line
+      // features are intentionally omitted to avoid duplicate marks and paths.
+      const renderableFeatures = fillOnly
+        ? cellFeatures.filter((feature) =>
+          (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') &&
+          ['DEPARE', 'DRGARE', 'LNDARE', 'UNSARE'].includes(String(feature.properties?.cm93Class ?? '')))
+        : cellFeatures;
       const cellScale = key.split('.').pop()?.toUpperCase() ?? 'A';
-      features.push(...cellFeatures.map((feature) => ({
+      features.push(...renderableFeatures.map((feature) => ({
         ...feature,
-        properties: { ...(feature.properties ?? {}), cm93SourceCell: key, cm93Scale: cellScale },
+        properties: { ...(feature.properties ?? {}), cm93SourceCell: key, cm93Scale: cellScale, ...(fillOnly ? { cm93FillFallback: true } : {}) },
       })));
       // Yield periodically so the UI can respond while a viewport quilt is built.
       if ((index + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -980,7 +990,7 @@ export default function App() {
       .map(([name, entry]) => name + ': ' + entry.count + ' (' + [...entry.geometries].join('/') + ')');
     setCm93QuiltStats({
       scale: selection.scale + ' target (' + (scaleBreakdown || 'no cells') + ')',
-      cells: selection.files.length,
+      cells: selection.files.length + selection.fillFallbackFiles.length,
       features: quiltFeatures.length,
       cached: cm93DecodedCacheRef.current.size,
       failed,
@@ -991,9 +1001,9 @@ export default function App() {
       const cellScale = (file.webkitRelativePath || file.name).split('.').pop()?.toUpperCase() ?? 'A';
       return cm93Scales.indexOf(cellScale) < cm93Scales.indexOf(selection.scale);
     }).length;
-    setMessage('Automatic CM93 detail: ' + selection.files.length + ' ' + selection.scale +
+    setMessage('Automatic CM93 detail: ' + (selection.files.length + selection.fillFallbackFiles.length) + ' ' + selection.scale +
       '-scale and coarser underlay cells, ' + features.length.toLocaleString() + ' current features (' + decoded +
-      ' newly decoded, ' + (selection.files.length - decoded - failed) + ' from cache); ' +
+      ' newly decoded, ' + (selection.files.length + selection.fillFallbackFiles.length - decoded - failed) + ' from cache); ' +
       underlayCellCount + ' coarser-scale underlay cells; ' + emptyCells + ' empty cells.' +
       (failed ? ' ' + failed + ' cells failed to decode: ' + failedCellNames.slice(0, 5).join(', ') + (failedCellNames.length > 5 ? ', …' : '') + '.' : ''));
   }, []);

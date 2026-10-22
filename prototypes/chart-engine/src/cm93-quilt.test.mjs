@@ -121,3 +121,28 @@ test('builds the quilt only from the current viewport selection', () => {
 test('an empty current selection cannot inherit stale features from a prior zoom', () => {
   assert.deepEqual(buildCm93QuiltFeatures([]), []);
 });
+
+
+test('selects finer E/F/G cells as fill-only supplements at D/E/F scales', () => {
+  const coarse = cell('03841050.D', 'cm93/03301020/D/03841050.D');
+  const e = cell('03851052.E', 'cm93/03301020/E/03851052.E');
+  const g = cell('03851052.G', 'cm93/03301020/G/03851052.G');
+  const result = selectCm93ViewportCells([coarse, e, g], {
+    west: -9.4, south: 38.5, east: -9.2, north: 38.7,
+  }, 8);
+
+  assert.ok(result.files.includes(coarse));
+  assert.deepEqual(result.fillFallbackFiles, [g], 'the finest available same-footprint cell is preferred');
+  assert.deepEqual(result.scaleCounts, { D: 1 });
+});
+
+test('uses finer fill-only cells when the requested E cell exists but lacks local coverage', () => {
+  const e = cell('03851052.E', 'cm93/03301020/E/03851052.E');
+  const g = cell('03851052.G', 'cm93/03301020/G/03851052.G');
+  const result = selectCm93ViewportCells([e, g], {
+    west: -9.4, south: 38.5, east: -9.2, north: 38.7,
+  }, 10);
+
+  assert.ok(result.files.includes(e), 'keep the requested-scale cell');
+  assert.deepEqual(result.fillFallbackFiles, [g], 'also load finer cell as area-fill-only fallback');
+});
