@@ -31,6 +31,24 @@ test('applies the matching _m_sor offset to chart features but not to M_COVR its
   assert.ok(line.geometry.coordinates[0][1] > 0);
 });
 
+test('chooses the matching M_COVR offset when a cell has multiple coverage polygons', () => {
+  const westCoverage = {
+    type: 'Feature',
+    properties: { cm93Class: '_m_sor', _wgsox: -100, _wgsoy: 0 },
+    geometry: { type: 'Polygon', coordinates: [[[-10, -10], [0, -10], [0, 0], [-10, 0], [-10, -10]]] },
+  };
+  const eastCoverage = {
+    type: 'Feature',
+    properties: { cm93Class: '_m_sor', _wgsox: -300, _wgsoy: 0 },
+    geometry: { type: 'Polygon', coordinates: [[[0, -10], [10, -10], [10, 0], [0, 0], [0, -10]]] },
+  };
+  const westPoint = { type: 'Feature', properties: { cm93Class: 'LIGHTS' }, geometry: { type: 'Point', coordinates: [-5, -5] } };
+  const eastPoint = { type: 'Feature', properties: { cm93Class: 'LIGHTS' }, geometry: { type: 'Point', coordinates: [5, -5] } };
+  applyCm93CoverageOffsets([westCoverage, eastCoverage, westPoint, eastPoint]);
+  assert.ok(westPoint.geometry.coordinates[0] > -5);
+  assert.ok(eastPoint.geometry.coordinates[0] > westPoint.geometry.coordinates[0] + 0.001);
+});
+
 test('decodes and validates a real CM93 V2 cell header', () => {
   const header = decodeCm93CellHeader(firstCellHeader, 2752, '00900000.A');
   assert.equal(header.headerLength, 138);
