@@ -84,8 +84,6 @@ function interpolate(start: Position2D, end: Position2D, t: number): Position2D 
 
 function clipLineToCoverage(line: Position2D[], coverage: MultiPolygonCoordinates): Position2D[][] {
   if (line.length < 2 || coverage.length === 0) return [];
-  if (line.every((point) => cm93PointInCoverage(point, coverage))) return [line];
-
   const edges: Array<[Position2D, Position2D]> = [];
   for (const polygon of coverage) {
     for (const ring of polygon) {
