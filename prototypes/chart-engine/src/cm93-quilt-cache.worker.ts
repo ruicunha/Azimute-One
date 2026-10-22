@@ -186,6 +186,12 @@ async function buildOrRead(request: Extract<RequestMessage, { type: 'build' }>) 
     // made the supposedly fast path expensive. Reuse the last storage snapshot
     // and refresh only the session counters. Storage size is refreshed on a
     // cache miss/write, when the extra diagnostic work is less intrusive.
+    if (!lastTelemetry) {
+      // Populate the initial storage snapshot once per worker session so the
+      // diagnostics panel remains useful after a page reload. Subsequent hits
+      // never rescan the full cache.
+      try { await getTelemetry(); } catch { /* Stats are diagnostic only. */ }
+    }
     const telemetry = lastTelemetry ? { ...lastTelemetry, ...counters } : undefined;
     return { value: cached, cacheHit: true, telemetry };
   }
