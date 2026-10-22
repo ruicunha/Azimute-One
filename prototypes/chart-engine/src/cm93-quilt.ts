@@ -33,16 +33,25 @@ export const CM93_SCALE_STEPS: Record<Cm93ScaleCode, number> = {
   G: 1,
 };
 
-/** Delay finer-scale transitions until the map is sufficiently zoomed in. */
-export function cm93ScaleForZoom(zoom: number): Cm93ScaleCode {
-  if (zoom < 3.5) return 'Z';
-  if (zoom < 4.5) return 'A';
-  if (zoom < 5.5) return 'B';
-  if (zoom < 7.5) return 'C';
-  if (zoom < 9.5) return 'D';
-  if (zoom < 11.5) return 'E';
-  if (zoom < 13.5) return 'F';
-  return 'G';
+/**
+ * Estimate the display scale using OpenCPN's CM93 scale-break sequence.
+ * MapLibre zoom is converted to ground metres per CSS pixel at the viewport
+ * latitude; the 3000 factor mirrors OpenCPN's view_scale_ppm calculation.
+ */
+export function cm93ScaleForZoom(zoom: number, latitude = 0): Cm93ScaleCode {
+  const clampedLatitude = Math.max(-85.05113, Math.min(85.05113, latitude));
+  const metresPerPixel = Math.cos(clampedLatitude * Math.PI / 180) *
+    (2 * Math.PI * 6_378_137) / (512 * Math.pow(2, zoom));
+  const displayScale = metresPerPixel * 3000;
+
+  if (displayScale <= 5_000) return 'G';
+  if (displayScale <= 15_000) return 'F';
+  if (displayScale <= 40_000) return 'E';
+  if (displayScale <= 150_000) return 'D';
+  if (displayScale <= 300_000) return 'C';
+  if (displayScale <= 1_000_000) return 'B';
+  if (displayScale <= 5_000_000) return 'A';
+  return 'Z';
 }
 
 function normalizedLongitude(longitude: number): number {
@@ -74,7 +83,7 @@ export function selectCm93ViewportCells(
   zoom: number,
   maxCells = 1200,
 ): Cm93ViewportSelection {
-  const targetScale = cm93ScaleForZoom(zoom);
+  const targetScale = cm93ScaleForZoom(zoom, (bounds.south + bounds.north) / 2);
   const targetIndex = CM93_SCALE_ORDER.indexOf(targetScale);
   const byPath = new Map<string, Cm93CellFile>();
   for (const file of files) {
