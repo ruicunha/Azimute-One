@@ -7,7 +7,8 @@ import { chartCatalog, zoomForChartScale, type ChartDefinition } from './chart-c
 import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
 import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
-import { buildCm93QuiltFeatures, selectCm93ViewportCells } from './cm93-quilt';
+import { buildCm93QuiltFeatures, selectCm93ViewportCells, type Cm93ScaleCode } from './cm93-quilt';
+import { buildCm93CoverageQuiltFeatures, cm93PointInCoverage, type Cm93MultiPolygonCoordinates } from './cm93-quilt-geometry';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -225,6 +226,7 @@ export default function App() {
   const cm93DictionaryRef = useRef<Cm93Dictionary | null>(null);
   const cm93DecodedCacheRef = useRef(new Map<string, ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>());
   const cm93RenderedFeaturesRef = useRef<ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>([]);
+  const cm93CoverageByScaleRef = useRef<Partial<Record<Cm93ScaleCode, Cm93MultiPolygonCoordinates>>>({});
   const cm93QuiltRequestRef = useRef(0);
   const cm93AutoEnabledRef = useRef(false);
   const cm93OverviewScaleRef = useRef<string | null>(null);
@@ -347,6 +349,12 @@ export default function App() {
         })
         : [];
       const selectedCells = [...(selection?.files ?? []), ...(selection?.fillFallbackFiles ?? [])];
+      const effectiveCoverageAtClickByScale = Object.entries(cm93CoverageByScaleRef.current)
+        .map(([scale, coverage]) => ({
+          scale,
+          containsClick: Boolean(coverage?.length && cm93PointInCoverage([click.longitude, click.latitude], coverage)),
+        }));
+      const effectiveScaleAtClick = effectiveCoverageAtClickByScale.find((entry) => entry.containsClick)?.scale ?? null;
       const report = {
         reportType: 'Azimute One CM93 map-click diagnostic',
         capturedAt: new Date().toISOString(),
@@ -356,6 +364,8 @@ export default function App() {
           directoryLoaded: files.length > 0,
           automaticDetailEnabled: cm93AutoEnabledRef.current,
           requestedScale: selection?.scale ?? null,
+          effectiveScaleAtClick,
+          effectiveCoverageAtClickByScale,
           selectedCellCount: selectedCells.length,
           selectedScaleCounts: selection?.scaleCounts ?? {},
           selectedFillFallbackCellCount: selection?.fillFallbackFiles.length ?? 0,
@@ -378,8 +388,9 @@ export default function App() {
           renderedFeatureCountAtClick: renderedFeatures.length,
         },
         notes: [
-          'Selected-cell paths are filename/grid-based candidates, not verified M_COVR coverage.',
-          'Finer fill-fallback cells contribute area polygons only; points and lines remain at the primary scale.',
+          'Selected-cell paths are filename/grid-based candidates; decoded M_COVR coverage determines which scale renders at each location.',
+          'Each scale is clipped to its allocated coverage region; coarser scales fill only regions not covered by more detailed scales.',
+          'effectiveScaleAtClick reports which allocated M_COVR region owns the clicked coordinate; null means no selected scale covers that point.',
           'A null cachedDecodedFeatureCount means that cell is not currently in the decoded cache.',
           'Rendered features are only features MapLibre reports at the clicked pixel and may be empty if no CM93 layer is visible there.',
         ],
@@ -552,6 +563,7 @@ export default function App() {
       cm93QuiltRequestRef.current++;
       cm93DecodedCacheRef.current.clear();
       cm93RenderedFeaturesRef.current = [];
+      cm93CoverageByScaleRef.current = {};
       cm93OverviewScaleRef.current = null;
       setCm93QuiltStats(null);
       if (mapRef.current) {
@@ -797,7 +809,7 @@ export default function App() {
 
       map.fitBounds([[west, south], [east, north]], { padding: 40, maxZoom: 8, duration: 600 });
     const pointCounts = new Map<string, number>();
-      for (const feature of features) { if (feature.geometry.type === 'Point' || feature.geometry.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } }
+      for (const feature of features) { if (feature.geometry?.type === 'Point' || feature.geometry?.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } }
       setCm93PointClassCounts([...pointCounts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count));
       cm93OverviewScaleRef.current = scale;
       cm93AutoEnabledRef.current = true;
@@ -836,6 +848,7 @@ export default function App() {
       const source = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
       source?.setData?.({ type: 'FeatureCollection', features: [] } as never);
       cm93RenderedFeaturesRef.current = [];
+      cm93CoverageByScaleRef.current = {};
       setCm93QuiltStats({
         scale: selection.scale,
         cells: 0,
@@ -846,26 +859,23 @@ export default function App() {
       });
       setStatus('ready');
       setMessage('Automatic CM93 detail: no cells at scale ' + selection.scale +
-        ' or any coarser fallback scale cover this viewport.' +
+        ' or any coarser scale were found in this viewport.' +
         (map.getSource('cm93-active-cell') ? ' The overview remains visible.' : ' No CM93 coverage is available here.'));
       return;
     }
 
     setStatus('loading');
-    setMessage('Loading CM93 ' + selection.scale + '-scale detail: ' + (selection.files.length + selection.fillFallbackFiles.length) + ' viewport cells…');
+    setMessage('Loading CM93 ' + selection.scale + '-scale coverage quilt: ' + selection.files.length + ' candidate cells…');
     const features: ReturnType<typeof cm93CellToGeoJSON>['geojson']['features'] = [];
     let failed = 0;
     let decoded = 0;
     let emptyCells = 0;
     const failedCellNames: string[] = [];
 
-    const selectedForRendering = [
-      ...selection.files.map((file) => ({ file, fillOnly: false })),
-      ...selection.fillFallbackFiles.map((file) => ({ file, fillOnly: true })),
-    ];
+    const selectedForRendering = selection.files.map((file) => ({ file }));
     for (let index = 0; index < selectedForRendering.length; index++) {
       if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
-      const { file, fillOnly } = selectedForRendering[index];
+      const { file } = selectedForRendering[index];
       const key = (file.webkitRelativePath || file.name).toLowerCase();
       let cellFeatures = cm93DecodedCacheRef.current.get(key);
       if (cellFeatures) {
@@ -891,17 +901,10 @@ export default function App() {
       }
       if (!cellFeatures) continue;
       if (cellFeatures.length === 0) emptyCells++;
-      // Fine fallback cells only contribute area polygons. Their point and line
-      // features are intentionally omitted to avoid duplicate marks and paths.
-      const renderableFeatures = fillOnly
-        ? cellFeatures.filter((feature) =>
-          (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') &&
-          ['DEPARE', 'DRGARE', 'LNDARE', 'UNSARE'].includes(String(feature.properties?.cm93Class ?? '')))
-        : cellFeatures;
       const cellScale = key.split('.').pop()?.toUpperCase() ?? 'A';
-      features.push(...renderableFeatures.map((feature) => ({
+      features.push(...cellFeatures.map((feature) => ({
         ...feature,
-        properties: { ...(feature.properties ?? {}), cm93SourceCell: key, cm93Scale: cellScale, ...(fillOnly ? { cm93FillFallback: true } : {}) },
+        properties: { ...(feature.properties ?? {}), cm93SourceCell: key, cm93Scale: cellScale },
       })));
       // Yield periodically so the UI can respond while a viewport quilt is built.
       if ((index + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -911,7 +914,9 @@ export default function App() {
     // Do not reuse a prior zoom's features when selected cells fail to decode
     // or contain no usable geometry. That creates stale overlays and makes the
     // chart depend on navigation history.
-    const quiltFeatures = buildCm93QuiltFeatures(features);
+    const coverageQuilt = buildCm93CoverageQuiltFeatures(features, selection.scale);
+    cm93CoverageByScaleRef.current = coverageQuilt.coverageByScale;
+    const quiltFeatures = buildCm93QuiltFeatures(coverageQuilt.features);
     if (quiltFeatures.length === 0) {
       const source = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
       source?.setData?.({ type: 'FeatureCollection', features: [] } as never);
@@ -927,10 +932,10 @@ export default function App() {
     } else {
       clearCm93Quilt(map);
       map.addSource('cm93-quilt', { type: 'geojson', data, tolerance: 0.5, maxzoom: 14, buffer: 0 });
-      // Paint coarser-scale areas first and progressively finer-scale fills
-      // above them. The fine chart only obscures the underlay where it has
-      // actual polygon geometry; gaps therefore reveal current-viewport coarse
-      // data instead of going blank or reusing stale features from an old view.
+      // Features have already been clipped to non-overlapping M_COVR regions:
+      // detailed scales own their coverage, and coarser scales only fill the
+      // remaining geographic gaps. Layer order follows the same coarse-to-fine
+      // progression used by OpenCPN's CM93 quilt.
       for (const scale of cm93Scales) {
         const suffix = scale === 'Z' ? '' : '-' + scale;
         map.addLayer({
@@ -962,7 +967,7 @@ export default function App() {
     cm93RenderedFeaturesRef.current = quiltFeatures;
 
     // The quilt source now contains current-viewport cells from the requested
-    // scale and every available coarser scale, painted coarse-to-fine. Remove
+    // scale and coarser candidates, with geometry allocated by M_COVR. Remove
     // the whole-dataset overview only after this replacement is ready.
     for (const layerId of ['cm93-cell-labels', 'cm93-cell-depth-labels', 'cm93-cell-icons', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
       if (map.getLayer(layerId)) map.removeLayer(layerId);
@@ -974,7 +979,7 @@ export default function App() {
       .map(([scale, count]) => scale + ':' + count)
       .join(', ');
     const pointCounts = new Map<string, number>();
-    for (const feature of features) { if (feature.geometry.type === 'Point' || feature.geometry.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } }
+    for (const feature of quiltFeatures) { if (feature.geometry?.type === 'Point' || feature.geometry?.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } }
     setCm93PointClassCounts([...pointCounts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count));
     const classCounts = new Map<string, { count: number; geometries: Set<string> }>();
     for (const feature of quiltFeatures) {
@@ -1002,10 +1007,11 @@ export default function App() {
       return cm93Scales.indexOf(cellScale) < cm93Scales.indexOf(selection.scale);
     }).length;
     setMessage('Automatic CM93 detail: ' + (selection.files.length + selection.fillFallbackFiles.length) + ' ' + selection.scale +
-      '-scale and coarser underlay cells, ' + features.length.toLocaleString() + ' current features (' + decoded +
+      '-scale coverage quilt, ' + quiltFeatures.length.toLocaleString() + ' clipped features (' + decoded +
       ' newly decoded, ' + (selection.files.length + selection.fillFallbackFiles.length - decoded - failed) + ' from cache); ' +
-      underlayCellCount + ' coarser-scale underlay cells; ' + emptyCells + ' empty cells.' +
-      (failed ? ' ' + failed + ' cells failed to decode: ' + failedCellNames.slice(0, 5).join(', ') + (failedCellNames.length > 5 ? ', …' : '') + '.' : ''));
+      underlayCellCount + ' coarser candidate cells; ' + emptyCells + ' empty cells.' +
+      (failed ? ' ' + failed + ' cells failed to decode: ' + failedCellNames.slice(0, 5).join(', ') + (failedCellNames.length > 5 ? ', …' : '') + '.' : '') +
+      (coverageQuilt.warnings.length ? ' Coverage warnings: ' + coverageQuilt.warnings.join(' ') : ''));
   }, []);
 
   useEffect(() => {
@@ -1026,6 +1032,7 @@ export default function App() {
       if (mapRef.current) clearCm93Quilt(mapRef.current);
       setCm93QuiltStats(null);
       cm93RenderedFeaturesRef.current = [];
+      cm93CoverageByScaleRef.current = {};
       setMessage('Automatic CM93 detail loading disabled. The existing overview and manual cell rendering remain available.');
     } else {
       void syncCm93Quilt();
