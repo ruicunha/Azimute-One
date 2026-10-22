@@ -20,6 +20,7 @@ type PreparedCoverage = {
   geometry: MultiPolygonCoordinates;
   bounds: Bounds;
   edges: CoverageEdge[];
+  components: Array<{ geometry: PolygonCoordinates; bounds: Bounds }>;
 };
 
 function boundsOverlap(a: Bounds, b: Bounds): boolean {
@@ -61,7 +62,9 @@ function geometryBounds(geometry: GeoJSON.Geometry): Bounds | null {
 function prepareCoverage(geometry: MultiPolygonCoordinates): PreparedCoverage | null {
   let bounds: Bounds | null = null;
   const edges: CoverageEdge[] = [];
+  const components: PreparedCoverage['components'] = [];
   for (const polygon of geometry) {
+    let componentBounds: Bounds | null = null;
     for (const ring of polygon) {
       for (const point of ring) {
         if (!bounds) bounds = { minX: point[0], minY: point[1], maxX: point[0], maxY: point[1] };
@@ -70,6 +73,13 @@ function prepareCoverage(geometry: MultiPolygonCoordinates): PreparedCoverage | 
           bounds.minY = Math.min(bounds.minY, point[1]);
           bounds.maxX = Math.max(bounds.maxX, point[0]);
           bounds.maxY = Math.max(bounds.maxY, point[1]);
+        }
+        if (!componentBounds) componentBounds = { minX: point[0], minY: point[1], maxX: point[0], maxY: point[1] };
+        else {
+          componentBounds.minX = Math.min(componentBounds.minX, point[0]);
+          componentBounds.minY = Math.min(componentBounds.minY, point[1]);
+          componentBounds.maxX = Math.max(componentBounds.maxX, point[0]);
+          componentBounds.maxY = Math.max(componentBounds.maxY, point[1]);
         }
       }
       for (let i = 1; i < ring.length; i++) {
@@ -84,8 +94,9 @@ function prepareCoverage(geometry: MultiPolygonCoordinates): PreparedCoverage | 
         });
       }
     }
+    if (componentBounds) components.push({ geometry: polygon, bounds: componentBounds });
   }
-  return bounds ? { geometry, bounds, edges } : null;
+  return bounds ? { geometry, bounds, edges, components } : null;
 }
 
 const clipping = polygonClipping as unknown as {
@@ -254,8 +265,18 @@ function clipFeatureToCoverage(feature: GeoJSON.Feature, prepared: PreparedCover
   }
   const multiPolygon = toMultiPolygon(geometry);
   if (!multiPolygon) return [];
+  // The effective coverage can contain many disconnected polygon components.
+  // Intersecting against the full MultiPolygon makes polygon-clipping compare
+  // each feature with all of them. Keep only components whose bounds overlap
+  // this feature, then run the same Boolean intersection on that reduced set.
+  // Preserve each candidate polygon's holes and use inclusive bbox overlap so
+  // boundary-touching components are not accidentally discarded.
+  const candidateCoverage = prepared.components
+    .filter((component) => boundsOverlap(bounds, component.bounds))
+    .map((component) => component.geometry);
+  if (!candidateCoverage.length) return [];
   try {
-    const clipped = clipping.intersection(multiPolygon, coverage);
+    const clipped = clipping.intersection(multiPolygon, candidateCoverage);
     if (!clipped.length) return [];
     if (clipped.length === 1) {
       return [{ ...feature, geometry: { type: 'Polygon', coordinates: clipped[0] } }];
@@ -265,6 +286,10 @@ function clipFeatureToCoverage(feature: GeoJSON.Feature, prepared: PreparedCover
     // Invalid geometry must not leak outside its chart's M_COVR region.
     return [];
   }
+}
+
+function geometryTypeIsPolygon(type: GeoJSON.Geometry['type']): boolean {
+  return type === 'Polygon' || type === 'MultiPolygon';
 }
 
 function isCoverageFeature(feature: GeoJSON.Feature): boolean {
@@ -297,6 +322,8 @@ export type Cm93CoverageQuiltMetrics = {
   polygonFeatureCount: number;
   outputFeatureCount: number;
   coverageEdgeCount: number;
+  polygonCoverageComponentCount: number;
+  polygonCoverageCandidateCount: number;
 };
 
 export type Cm93CoverageQuiltResult = {
@@ -322,6 +349,7 @@ export function buildCm93CoverageQuiltFeatures(
     inputFeatureCount: currentFeatures.length, coverageFeatureCount: 0, metadataFeatureCount: 0,
     missingGeometryCount: 0, invalidScaleCount: 0, noCoverageCount: 0, boundsRejectedCount: 0,
     pointFeatureCount: 0, lineFeatureCount: 0, polygonFeatureCount: 0, outputFeatureCount: 0, coverageEdgeCount: 0,
+    polygonCoverageComponentCount: 0, polygonCoverageCandidateCount: 0,
   };
   const targetIndex = CM93_SCALE_ORDER.indexOf(targetScale);
   const rawRegions = new Map<Cm93ScaleCode, MultiPolygonCoordinates[]>();
@@ -382,6 +410,7 @@ export function buildCm93CoverageQuiltFeatures(
     if (prepared) {
       preparedCoverageByScale[scale] = prepared;
       metrics.coverageEdgeCount += prepared.edges.length;
+      metrics.polygonCoverageComponentCount += prepared.components.length;
     }
   }
   metrics.prepareCoverageMs = performance.now() - prepareStartedAt;
@@ -408,6 +437,11 @@ export function buildCm93CoverageQuiltFeatures(
 
     const geometryType = feature.geometry.type;
     const clipStartedAt = performance.now();
+    if (geometryTypeIsPolygon(feature.geometry.type)) {
+      metrics.polygonCoverageCandidateCount += prepared.components.reduce(
+        (count, component) => count + (boundsOverlap(bounds, component.bounds) ? 1 : 0), 0,
+      );
+    }
     const clipped = clipFeatureToCoverage(feature, prepared, bounds);
     const clipMs = performance.now() - clipStartedAt;
     if (geometryType === 'Point' || geometryType === 'MultiPoint') {
