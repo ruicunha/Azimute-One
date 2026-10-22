@@ -1,5 +1,5 @@
 import polygonClipping from 'polygon-clipping';
-import { CM93_SCALE_ORDER, type Cm93ScaleCode } from './cm93-quilt';
+import { CM93_SCALE_ORDER, type Cm93ScaleCode } from './cm93-quilt.ts';
 
 type Position2D = [number, number];
 type Ring = Position2D[];
