@@ -40,7 +40,7 @@ test('falls back to the nearest coarser cell when the target-scale cell is missi
   assert.deepEqual(result.scaleCounts, { C: 1 });
 });
 
-test('prefers a finer cell in one footprint and uses coarse fallback for an adjacent missing footprint', () => {
+test('keeps coarse underlay cells beneath available finer cells in the current viewport', () => {
   const fine = cell('D', '03841050.D', 'cm93/03301020/D/03841050.D');
   const coarse = cell('C', '03781044.C', 'cm93/03301020/C/03781044.C');
   const result = selectCm93ViewportCells([fine, coarse], {
@@ -49,6 +49,7 @@ test('prefers a finer cell in one footprint and uses coarse fallback for an adja
 
   assert.ok(result.files.includes(fine));
   assert.ok(result.files.includes(coarse));
+  assert.deepEqual(result.files, [coarse, fine], 'coarse underlay must be ordered before fine cells');
   assert.equal(result.scale, 'D');
   assert.equal(result.scaleCounts.D, 1);
   assert.equal(result.scaleCounts.C, 1);
