@@ -248,6 +248,7 @@ export default function App() {
   const [cm93AutoEnabled, setCm93AutoEnabled] = useState(false);
   const [cm93ClippingEngine, setCm93ClippingEngine] = useState<Cm93PolygonClippingEngine>('polygon-clipping');
   const [cm93WebGpuBenchmark, setCm93WebGpuBenchmark] = useState<Cm93WebGpuCandidateBenchmark | null>(null);
+  const [cm93WebGpuBenchmarkError, setCm93WebGpuBenchmarkError] = useState<string | null>(null);
   const [cm93WebGpuBenchmarkRunning, setCm93WebGpuBenchmarkRunning] = useState(false);
   const [cm93PointClassCounts, setCm93PointClassCounts] = useState<Array<{ name: string; count: number }>>([]);
   const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
@@ -836,11 +837,14 @@ export default function App() {
     const scale = cm93QuiltStats?.scale as Cm93ScaleCode | undefined;
     const coverage = scale ? cm93CoverageByScaleRef.current[scale] : undefined;
     if (!coverage || !cm93RawFeaturesRef.current.length) {
-      setMessage('Enable automatic CM93 detail and wait for a viewport quilt before running the WebGPU experiment.');
+      const errorMessage = 'No ready CM93 quilt data is available. Enable automatic CM93 detail and wait for a viewport quilt to finish, then try again.';
+      setCm93WebGpuBenchmarkError(errorMessage);
+      setMessage(errorMessage);
       return;
     }
     setCm93WebGpuBenchmarkRunning(true);
     setCm93WebGpuBenchmark(null);
+    setCm93WebGpuBenchmarkError(null);
     try {
       const result = await benchmarkCm93WebGpuPolygonCandidates(
         cm93RawFeaturesRef.current as GeoJSON.Feature[],
@@ -851,7 +855,9 @@ export default function App() {
         ? 'WebGPU polygon candidate benchmark completed. GPU and CPU candidate sets match.'
         : 'WebGPU benchmark detected a candidate mismatch. Do not use the experimental result for chart rendering.');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'WebGPU polygon candidate benchmark failed.');
+      const errorMessage = error instanceof Error ? error.message : 'WebGPU polygon candidate benchmark failed for an unknown reason.';
+      setCm93WebGpuBenchmarkError(errorMessage);
+      setMessage(errorMessage);
     } finally {
       setCm93WebGpuBenchmarkRunning(false);
     }
@@ -1154,11 +1160,16 @@ export default function App() {
             <p>Active engine: <strong>{cm93ClippingEngine}</strong>. Martinez is experimental; compare coastline, depth areas and scale transitions carefully.</p>
           </div>}
           {cm93Summary?.isLikelyCm93V2 && <div className="legend">
-            <span className="field-label">EXPERIMENTAL WEBGPU POLYGON CLIPPING</span>
-            <p>Benchmark GPU-parallel polygon-feature/coverage-component bounding-box candidate filtering against the CPU. This is a safe first WebGPU stage: exact polygon Boolean clipping and all chart rendering remain unchanged on the CPU/current engine.</p>
+            <span className="field-label">WEBGPU CANDIDATE-FILTERING TEST (EXPERIMENTAL)</span>
+            <p>This is a separate diagnostic test, not GPU chart rendering. It tests bounding-box candidate filtering on the GPU; exact polygon clipping and the displayed chart still use the selected CPU clipping engine.</p>
             <button className="secondary-button" type="button" disabled={cm93WebGpuBenchmarkRunning || !cm93AutoEnabled || !cm93QuiltStats} onClick={() => void runCm93WebGpuBenchmark()}>
-              {cm93WebGpuBenchmarkRunning ? 'Running WebGPU benchmark…' : 'Run WebGPU polygon benchmark'}
+              {cm93WebGpuBenchmarkRunning ? 'Running WebGPU test…' : 'Run WebGPU candidate-filtering test'}
             </button>
+            {!cm93AutoEnabled && <p role="status">Enable automatic CM93 detail to run this test.</p>}
+            {cm93AutoEnabled && !cm93QuiltStats && <p role="status">Waiting for the first CM93 viewport quilt to finish.</p>}
+            {cm93WebGpuBenchmarkRunning && <p role="status">Benchmark running. GPU setup and dispatch/readback timings will appear here when it finishes.</p>}
+            {cm93WebGpuBenchmarkError && <p role="alert"><strong>WebGPU test failed:</strong> {cm93WebGpuBenchmarkError}</p>}
+            {cm93WebGpuBenchmark && <p role="status"><strong>Benchmark completed.</strong> This result applies only to candidate filtering, not the chart's actual polygon clipping.</p>}
             {cm93WebGpuBenchmark && <ul>
               <li>GPU adapter: {cm93WebGpuBenchmark.adapter}</li>
               <li>Workload: {cm93WebGpuBenchmark.polygonFeatureCount.toLocaleString()} polygon features × {cm93WebGpuBenchmark.coverageComponentCount.toLocaleString()} coverage components = {cm93WebGpuBenchmark.pairCount.toLocaleString()} candidate pairs</li>
