@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { unzipSync } from 'fflate';
 import polygonClipping from 'polygon-clipping';
-import martinez from 'martinez-polygon-clipping';
+import * as martinez from 'martinez-polygon-clipping';
 import {
   cm93CellToGeoJSON,
   parseCm93Cell,
