@@ -1292,6 +1292,11 @@ export default function App() {
                 } : null,
                 performance: {
                   timingsMs: cm93QuiltStats.timings ?? null,
+                  quiltCacheHit: cm93QuiltStats.quiltCacheHit ?? null,
+                  quiltCacheSource: cm93QuiltStats.quiltCacheSource ?? null,
+                  // Geometry metrics describe the quilt build. On a cache hit they
+                  // are historical metrics from when this cached value was created.
+                  geometryMetricsAreFromCachedBuild: cm93QuiltStats.quiltCacheHit ?? false,
                   geometryMetrics: cm93QuiltStats.geometryMetrics ?? null,
                   targetScaleAndCellMix: cm93QuiltStats.scale,
                   viewportCellCount: cm93QuiltStats.cells,
@@ -1316,7 +1321,7 @@ export default function App() {
                   scales: cm93Summary.scales.map(({ code, fileCount }) => ({ code, fileCount })),
                 } : null,
                 lastMapClickDiagnostic: clickReport,
-                testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. The persistent browser quilt cache is keyed by scale, clipping engine, and selected cell file metadata. quiltCacheHit and quiltCacheSource identify whether the most recent viewport update reused in-memory or persistent cached geometry. Include zoom-transition runs where detail appears late.',
+                testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. quiltCacheHit and quiltCacheSource identify whether the latest update reused memory, IndexedDB, or rebuilt the quilt. On cache hits, geometryMetrics are from the original cached build and are not work repeated by this render. quiltMs includes cache retrieval and preparation of the returned GeoJSON for MapLibre. Include zoom-transition runs where detail appears late.',
               };
               void navigator.clipboard?.writeText(JSON.stringify(report, null, 2)).then(() => {
                 setMessage('CM93 performance diagnostics copied. Repeat for cold-cache and warm-cache runs.');
