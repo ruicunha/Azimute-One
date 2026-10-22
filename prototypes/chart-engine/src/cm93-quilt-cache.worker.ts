@@ -31,6 +31,8 @@ type CacheTelemetry = {
   budgetBytes: number;
 };
 
+type CacheTimings = { indexedDbReadMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number };
+
 const counters = { hits: 0, misses: 0, readErrors: 0, writes: 0, writeErrors: 0, evictions: 0, skippedOversized: 0 };
 let lastTelemetry: CacheTelemetry | null = null;
 
@@ -157,42 +159,46 @@ async function writeEntry(key: string, value: unknown): Promise<boolean> {
 }
 
 async function lookup(request: Extract<RequestMessage, { type: 'lookup' }>) {
+  const readStartedAt = performance.now();
   let cached: unknown | null = null;
   try {
     cached = await readEntry(request.key);
   } catch {
     counters.readErrors++;
   }
+  const indexedDbReadMs = performance.now() - readStartedAt;
   if (cached) {
     counters.hits++;
-    // The persistent-size snapshot is expensive because IndexedDB returns
-    // full stored values. Take it at most once per worker session, never on
-    // subsequent hits. The main hot-path optimization is that lookup requests
-    // carry only the key, not the decoded feature array.
+    // Do not block a cache hit on telemetry. getAll() materializes every large
+    // stored GeoJSON value, so the inventory scan runs after the render reply.
     if (!lastTelemetry) {
-      try { await getTelemetry(); } catch { /* Statistics must not block rendering. */ }
+      const telemetryStartedAt = performance.now();
+      void getTelemetry().then((telemetry) => {
+        workerScope.postMessage({ type: 'telemetry', telemetry, timings: { telemetryMs: performance.now() - telemetryStartedAt } });
+      }).catch(() => { /* Statistics are diagnostic only. */ });
     }
-    return {
-      cacheHit: true,
-      value: cached,
-      telemetry: lastTelemetry ? { ...lastTelemetry, ...counters } : undefined,
-    };
+    return { cacheHit: true, value: cached, timings: { indexedDbReadMs }, telemetry: lastTelemetry ? { ...lastTelemetry, ...counters } : undefined };
   }
 
   counters.misses++;
-  return { cacheHit: false };
+  return { cacheHit: false, timings: { indexedDbReadMs } };
 }
 
 async function build(request: Extract<RequestMessage, { type: 'build' }>) {
+  const buildStartedAt = performance.now();
   const value = buildCm93CoverageQuiltFeatures(request.features, request.scale, request.engine);
+  const geometryBuildMs = performance.now() - buildStartedAt;
+  const persistStartedAt = performance.now();
   try {
     if (await writeEntry(request.key, value)) counters.writes++;
   } catch {
     counters.writeErrors++;
   }
+  const persistMs = performance.now() - persistStartedAt;
   let telemetry: CacheTelemetry | undefined;
+  const telemetryStartedAt = performance.now();
   try { telemetry = await getTelemetry(); } catch { /* Stats are diagnostic only. */ }
-  return { value, cacheHit: false, telemetry };
+  return { value, cacheHit: false, telemetry, timings: { geometryBuildMs, persistMs, telemetryMs: performance.now() - telemetryStartedAt } };
 }
 
 const workerScope = self as unknown as {
