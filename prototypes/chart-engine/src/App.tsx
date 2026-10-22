@@ -921,7 +921,6 @@ export default function App() {
       const source = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
       source?.setData?.({ type: 'FeatureCollection', features: [] } as never);
       cm93RenderedFeaturesRef.current = [];
-      cm93CoverageByScaleRef.current = {};
       setStatus('ready');
       setMessage('No usable features in the currently selected CM93 cells at scale ' + selection.scale + '. Previous-scale features were cleared to avoid stale overlays.');
       return;
