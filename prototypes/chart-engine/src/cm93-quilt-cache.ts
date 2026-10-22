@@ -1,6 +1,8 @@
+import type { Cm93PolygonClippingEngine } from './cm93-quilt-geometry.ts';
+import type { Cm93ScaleCode } from './cm93-quilt.ts';
+
 type WorkerReply = { id: number; ok: boolean; value?: unknown; error?: string };
 type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error) => void };
-
 let worker: Worker | null = null;
 let nextId = 1;
 const pending = new Map<number, PendingRequest>();
@@ -30,50 +32,45 @@ function getWorker(): Worker | null {
   return worker;
 }
 
-function request(type: 'get', key: string): Promise<unknown | null>;
-function request(type: 'set', key: string, value: unknown): Promise<unknown>;
-function request(type: 'get' | 'set', key: string, value?: unknown): Promise<unknown> {
+function buildRequest(
+  key: string,
+  features: GeoJSON.Feature[],
+  scale: Cm93ScaleCode,
+  engine: Cm93PolygonClippingEngine,
+): Promise<unknown> {
   const activeWorker = getWorker();
-  if (!activeWorker) return Promise.resolve(type === 'get' ? null : undefined);
+  if (!activeWorker) {
+    // The worker is optional. Returning null signals the caller to use the
+    // existing synchronous CPU path when Web Workers or IndexedDB are absent.
+    return Promise.resolve(null);
+  }
   const id = nextId++;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    activeWorker.postMessage({ id, type, key, value });
+    activeWorker.postMessage({ id, type: 'build', key, features, scale, engine });
   });
 }
 
-export async function getCm93CachedQuilt<T>(key: string): Promise<T | null> {
+export async function getOrBuildCm93CachedQuilt<T>(
+  key: string,
+  features: GeoJSON.Feature[],
+  scale: Cm93ScaleCode,
+  engine: Cm93PolygonClippingEngine,
+): Promise<{ value: T; cacheHit: boolean } | null> {
   try {
-    return await request('get', key) as T | null;
+    return await buildRequest(key, features, scale, engine) as { value: T; cacheHit: boolean } | null;
   } catch {
-    // The cache is an optimization only; quota or browser storage failures
-    // must never prevent the chart from being rendered.
+    // Worker/cache failures fall back to the original CPU processing path.
     return null;
   }
 }
 
-export async function setCm93CachedQuilt(key: string, value: unknown): Promise<void> {
-  try {
-    await request('set', key, value);
-  } catch {
-    // IndexedDB may be unavailable or full. Rendering remains unaffected.
-  }
-}
-
-export function cm93QuiltCacheKey(
-  scale: string,
-  clippingEngine: string,
-  files: File[],
-): string {
-  const identity = files
-    .map((file) => [
-      (file.webkitRelativePath || file.name).toLowerCase(),
-      file.size,
-      file.lastModified,
-    ].join(':'))
-    .sort()
-    .join('|');
-  // The version is deliberately part of the key so changes to the geometry
-  // pipeline can invalidate old cached results without clearing browser data.
-  return 'cm93-quilt-v1:' + scale + ':' + clippingEngine + ':' + identity;
+export function cm93QuiltCacheKey(scale: string, clippingEngine: string, files: File[]): string {
+  const identity = files.map((file) => [
+    (file.webkitRelativePath || file.name).toLowerCase(),
+    file.size,
+    file.lastModified,
+  ].join(':')).sort().join('|');
+  // Bump this version whenever CM93 quilt geometry semantics change.
+  return 'cm93-quilt-v2:' + scale + ':' + clippingEngine + ':' + identity;
 }
