@@ -101,8 +101,6 @@ export function selectCm93ViewportCells(
       const longitudeCell = ((longitudeCellUnwrapped % 1080) + 1080) % 1080;
       const centerLatitude = (latitudeCell + targetStep / 2 - 240) / 3;
       const centerLongitude = normalizedLongitude((longitudeCellUnwrapped + targetStep / 2) / 3);
-      let chosen: { file: Cm93CellFile; scale: Cm93ScaleCode } | undefined;
-
       // Select the requested scale and every available coarser scale for the
       // same target footprint. Coarser cells are an underlay, not a substitute
       // only when a filename is missing: finer cells can exist yet have no
