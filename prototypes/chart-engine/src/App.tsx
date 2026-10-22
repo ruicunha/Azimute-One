@@ -229,6 +229,7 @@ export default function App() {
   const cm93RenderedFeaturesRef = useRef<ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>([]);
   const cm93RawFeaturesRef = useRef<ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>([]);
   const cm93CoverageByScaleRef = useRef<Partial<Record<Cm93ScaleCode, Cm93MultiPolygonCoordinates>>>({});
+  const cm93WebGpuBenchmarkScaleRef = useRef<Cm93ScaleCode | null>(null);
   const cm93QuiltRequestRef = useRef(0);
   const cm93AutoEnabledRef = useRef(false);
   const cm93OverviewScaleRef = useRef<string | null>(null);
@@ -834,7 +835,9 @@ export default function App() {
 
 
   const runCm93WebGpuBenchmark = async () => {
-    const scale = cm93QuiltStats?.scale as Cm93ScaleCode | undefined;
+    // Keep the benchmark keyed by the actual scale code, not the human-readable
+    // stats label (for example, "G target (G:8, F:2)").
+    const scale = cm93WebGpuBenchmarkScaleRef.current;
     const coverage = scale ? cm93CoverageByScaleRef.current[scale] : undefined;
     if (!coverage || !cm93RawFeaturesRef.current.length) {
       const errorMessage = 'No ready CM93 quilt data is available. Enable automatic CM93 detail and wait for a viewport quilt to finish, then try again.';
@@ -886,7 +889,9 @@ export default function App() {
       const source = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
       source?.setData?.({ type: 'FeatureCollection', features: [] } as never);
       cm93RenderedFeaturesRef.current = [];
+      cm93RawFeaturesRef.current = [];
       cm93CoverageByScaleRef.current = {};
+      cm93WebGpuBenchmarkScaleRef.current = null;
       setCm93QuiltStats({
         scale: selection.scale,
         cells: 0,
@@ -961,6 +966,8 @@ export default function App() {
     const quiltFeatures = buildCm93QuiltFeatures(coverageQuilt.features);
     const quiltMs = performance.now() - quiltStartedAt;
     if (quiltFeatures.length === 0) {
+      cm93CoverageByScaleRef.current = {};
+      cm93WebGpuBenchmarkScaleRef.current = null;
       const source = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
       source?.setData?.({ type: 'FeatureCollection', features: [] } as never);
       cm93RenderedFeaturesRef.current = [];
@@ -968,6 +975,7 @@ export default function App() {
       setMessage('No usable features in the currently selected CM93 cells at scale ' + selection.scale + '. Previous-scale features were cleared to avoid stale overlays.');
       return;
     }
+    cm93WebGpuBenchmarkScaleRef.current = selection.scale;
     const sourceStartedAt = performance.now();
     const data = { type: 'FeatureCollection', features: quiltFeatures } as never;
     const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
