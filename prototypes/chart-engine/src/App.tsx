@@ -247,7 +247,7 @@ export default function App() {
   const [cm93PointClassCounts, setCm93PointClassCounts] = useState<Array<{ name: string; count: number }>>([]);
   const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
   const visibleCm93PointClassesRef = useRef<string[]>([]);
-  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[] } | null>(null);
+  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number } } | null>(null);
   const [cm93ClickDebug, setCm93ClickDebug] = useState<string | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
   const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; classes: string[]; attributes: string[]; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
@@ -832,6 +832,7 @@ export default function App() {
     const dictionary = cm93DictionaryRef.current;
     if (!cm93AutoEnabledRef.current || !map || !dictionary || !cm93FilesRef.current.length) return;
 
+    const totalStartedAt = performance.now();
     const requestId = ++cm93QuiltRequestRef.current;
     const bounds = map.getBounds();
     const selection = selectCm93ViewportCells(cm93FilesRef.current, {
@@ -840,6 +841,7 @@ export default function App() {
       east: bounds.getEast(),
       north: bounds.getNorth(),
     }, map.getZoom(), 1200);
+    const selectMs = performance.now() - totalStartedAt;
 
     if (selection.files.length === 0 && selection.fillFallbackFiles.length === 0) {
       // A prior quilt is not valid fallback for the current viewport: leaving
@@ -871,6 +873,7 @@ export default function App() {
     let decoded = 0;
     let emptyCells = 0;
     const failedCellNames: string[] = [];
+    const decodeStartedAt = performance.now();
 
     const selectedForRendering = selection.files.map((file) => ({ file }));
     for (let index = 0; index < selectedForRendering.length; index++) {
@@ -910,13 +913,16 @@ export default function App() {
       if ((index + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
 
+    const decodeMs = performance.now() - decodeStartedAt;
     if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
     // Do not reuse a prior zoom's features when selected cells fail to decode
     // or contain no usable geometry. That creates stale overlays and makes the
     // chart depend on navigation history.
+    const quiltStartedAt = performance.now();
     const coverageQuilt = buildCm93CoverageQuiltFeatures(features, selection.scale);
     cm93CoverageByScaleRef.current = coverageQuilt.coverageByScale;
     const quiltFeatures = buildCm93QuiltFeatures(coverageQuilt.features);
+    const quiltMs = performance.now() - quiltStartedAt;
     if (quiltFeatures.length === 0) {
       const source = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
       source?.setData?.({ type: 'FeatureCollection', features: [] } as never);
@@ -925,6 +931,7 @@ export default function App() {
       setMessage('No usable features in the currently selected CM93 cells at scale ' + selection.scale + '. Previous-scale features were cleared to avoid stale overlays.');
       return;
     }
+    const sourceStartedAt = performance.now();
     const data = { type: 'FeatureCollection', features: quiltFeatures } as never;
     const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
     if (existingSource?.setData) {
@@ -964,6 +971,8 @@ export default function App() {
 
     }
 
+    const sourceMs = performance.now() - sourceStartedAt;
+    const totalMs = performance.now() - totalStartedAt;
     cm93RenderedFeaturesRef.current = quiltFeatures;
 
     // The quilt source now contains current-viewport cells from the requested
@@ -1000,6 +1009,7 @@ export default function App() {
       cached: cm93DecodedCacheRef.current.size,
       failed,
       classes: classSummary,
+      timings: { selectMs, decodeMs, quiltMs, sourceMs, totalMs },
     });
     setStatus('ready');
     const underlayCellCount = selection.files.filter((file) => {
@@ -1124,9 +1134,53 @@ export default function App() {
               <li>Viewport cells: {cm93QuiltStats.cells}</li>
               <li>Rendered features: {cm93QuiltStats.features.toLocaleString()}</li>
               <li>Decoded-cell cache: {cm93QuiltStats.cached} cells</li>
+              {cm93QuiltStats.timings && <li>Last update timings: select {cm93QuiltStats.timings.selectMs.toFixed(1)} ms · decode {cm93QuiltStats.timings.decodeMs.toFixed(1)} ms · coverage/geometry {cm93QuiltStats.timings.quiltMs.toFixed(1)} ms · source update {cm93QuiltStats.timings.sourceMs.toFixed(1)} ms · total {cm93QuiltStats.timings.totalMs.toFixed(1)} ms</li>}
               {cm93QuiltStats.failed > 0 && <li>Decode failures: {cm93QuiltStats.failed}</li>}
               {cm93QuiltStats.classes.length > 0 && <li>Most common classes: {cm93QuiltStats.classes.join('; ')}</li>}
             </ul>
+            <button className="secondary-button" type="button" onClick={() => {
+              const map = mapRef.current;
+              const bounds = map?.getBounds();
+              const center = map?.getCenter();
+              const clickReport = cm93ClickDebug ? (() => {
+                try { return JSON.parse(cm93ClickDebug); } catch { return cm93ClickDebug; }
+              })() : null;
+              const report = {
+                reportType: 'Azimute One CM93 performance diagnostics',
+                capturedAt: new Date().toISOString(),
+                performance: {
+                  timingsMs: cm93QuiltStats.timings ?? null,
+                  targetScaleAndCellMix: cm93QuiltStats.scale,
+                  viewportCellCount: cm93QuiltStats.cells,
+                  renderedFeatureCount: cm93QuiltStats.features,
+                  decodedCellCacheSize: cm93QuiltStats.cached,
+                  decodeFailureCount: cm93QuiltStats.failed,
+                  mostCommonClasses: cm93QuiltStats.classes,
+                },
+                viewport: map && bounds && center ? {
+                  zoom: Number(map.getZoom().toFixed(3)),
+                  center: { latitude: Number(center.lat.toFixed(6)), longitude: Number(center.lng.toFixed(6)) },
+                  bounds: {
+                    west: Number(bounds.getWest().toFixed(6)),
+                    south: Number(bounds.getSouth().toFixed(6)),
+                    east: Number(bounds.getEast().toFixed(6)),
+                    north: Number(bounds.getNorth().toFixed(6)),
+                  },
+                } : null,
+                dataset: cm93Summary ? {
+                  fileCount: cm93Summary.fileCount,
+                  regionCount: cm93Summary.regionCount,
+                  scales: cm93Summary.scales.map(({ code, fileCount }) => ({ code, fileCount })),
+                } : null,
+                lastMapClickDiagnostic: clickReport,
+                testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. Include zoom-transition runs where detail appears late.',
+              };
+              void navigator.clipboard?.writeText(JSON.stringify(report, null, 2)).then(() => {
+                setMessage('CM93 performance diagnostics copied. Repeat for cold-cache and warm-cache runs.');
+              }).catch(() => {
+                setMessage('Clipboard access failed. Allow clipboard access for this site and try again.');
+              });
+            }}>Copy performance diagnostics (JSON)</button>
           </div>}
           {cm93Summary && <div className="legend cm93-summary">
             <span className="field-label">CM93 DATASET INVENTORY</span>
