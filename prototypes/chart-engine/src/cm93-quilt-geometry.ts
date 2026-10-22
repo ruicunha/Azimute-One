@@ -60,6 +60,33 @@ function geometryBounds(geometry: GeoJSON.Geometry): Bounds | null {
   return found ? bounds : null;
 }
 
+function simplifyRingForEdges(ring: Ring): Ring {
+  if (ring.length <= 4) return ring;
+  const points = ring.slice(0, -1);
+  let changed = true;
+  while (changed && points.length > 3) {
+    changed = false;
+    for (let i = 0; i < points.length; i++) {
+      const previous = points[(i + points.length - 1) % points.length];
+      const current = points[i];
+      const next = points[(i + 1) % points.length];
+      const ax = current[0] - previous[0];
+      const ay = current[1] - previous[1];
+      const bx = next[0] - current[0];
+      const by = next[1] - current[1];
+      const cross = ax * by - ay * bx;
+      const scale = Math.max(1, Math.hypot(ax, ay) * Math.hypot(bx, by));
+      const forward = ax * bx + ay * by >= -1e-12;
+      if (forward && Math.abs(cross) <= 1e-10 * scale) {
+        points.splice(i, 1);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return [...points, points[0]];
+}
+
 function prepareCoverage(geometry: MultiPolygonCoordinates): PreparedCoverage | null {
   let bounds: Bounds | null = null;
   const edges: CoverageEdge[] = [];
@@ -83,9 +110,15 @@ function prepareCoverage(geometry: MultiPolygonCoordinates): PreparedCoverage | 
           componentBounds.maxY = Math.max(componentBounds.maxY, point[1]);
         }
       }
-      for (let i = 1; i < ring.length; i++) {
-        const start = ring[i - 1];
-        const end = ring[i];
+      // Boolean clipping engines may retain many collinear vertices on a
+      // coverage boundary. They do not change the boundary's shape, but every
+      // duplicate segment increases the cost of clipping every chart line.
+      // Simplify only the edge index; keep the original polygon coordinates
+      // untouched for point containment and polygon Boolean operations.
+      const edgeRing = simplifyRingForEdges(ring);
+      for (let i = 1; i < edgeRing.length; i++) {
+        const start = edgeRing[i - 1];
+        const end = edgeRing[i];
         edges.push({
           start, end,
           minX: Math.min(start[0], end[0]),
