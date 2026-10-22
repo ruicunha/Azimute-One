@@ -124,11 +124,11 @@ async function readEntry(key: string): Promise<unknown | null> {
   }
 }
 
-async function writeEntry(key: string, value: unknown): Promise<void> {
+async function writeEntry(key: string, value: unknown): Promise<boolean> {
   const sizeBytes = estimateSizeBytes(value);
   // A single quilt larger than the entire budget is useful for this render,
   // but should not be persisted because it would immediately evict everything.
-  if (sizeBytes > CACHE_BUDGET_BYTES) { counters.skippedOversized++; return; }
+  if (sizeBytes > CACHE_BUDGET_BYTES) { counters.skippedOversized++; return false; }
 
   const database = await openDatabase();
   try {
@@ -163,28 +163,31 @@ async function writeEntry(key: string, value: unknown): Promise<void> {
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not persist the CM93 quilt cache.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('CM93 quilt cache write was aborted.'));
     });
+    return true;
   } finally {
     database.close();
   }
 }
 
 async function buildOrRead(request: Extract<RequestMessage, { type: 'build' }>) {
+  let cached: unknown | null = null;
   try {
-    const cached = await readEntry(request.key);
-    if (cached) {
-      counters.hits++;
-      return { value: cached, cacheHit: true, telemetry: await getTelemetry() };
-    }
+    cached = await readEntry(request.key);
   } catch {
     // A failed cache read falls back to building the quilt in this worker.
     counters.readErrors++;
+  }
+  if (cached) {
+    counters.hits++;
+    let telemetry: CacheTelemetry | undefined;
+    try { telemetry = await getTelemetry(); } catch { /* Stats are diagnostic only. */ }
+    return { value: cached, cacheHit: true, telemetry };
   }
 
   counters.misses++;
   const value = buildCm93CoverageQuiltFeatures(request.features, request.scale, request.engine);
   try {
-    await writeEntry(request.key, value);
-    counters.writes++;
+    if (await writeEntry(request.key, value)) counters.writes++;
   } catch {
     // Quota/storage failures must not prevent chart rendering.
     counters.writeErrors++;
