@@ -7,6 +7,78 @@ type PolygonCoordinates = Ring[];
 export type Cm93MultiPolygonCoordinates = PolygonCoordinates[];
 type MultiPolygonCoordinates = Cm93MultiPolygonCoordinates;
 
+type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
+type CoverageEdge = {
+  start: Position2D;
+  end: Position2D;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+};
+type PreparedCoverage = {
+  geometry: MultiPolygonCoordinates;
+  bounds: Bounds;
+  edges: CoverageEdge[];
+};
+
+function boundsOverlap(a: Bounds, b: Bounds): boolean {
+  return a.minX <= b.maxX && a.maxX >= b.minX &&
+    a.minY <= b.maxY && a.maxY >= b.minY;
+}
+
+function geometryBounds(geometry: GeoJSON.Geometry): Bounds | null {
+  let bounds: Bounds | null = null;
+  const visit = (value: unknown): void => {
+    if (!Array.isArray(value)) return;
+    if (value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number') {
+      const x = value[0];
+      const y = value[1];
+      if (!bounds) bounds = { minX: x, minY: y, maxX: x, maxY: y };
+      else {
+        bounds.minX = Math.min(bounds.minX, x);
+        bounds.minY = Math.min(bounds.minY, y);
+        bounds.maxX = Math.max(bounds.maxX, x);
+        bounds.maxY = Math.max(bounds.maxY, y);
+      }
+      return;
+    }
+    for (const child of value) visit(child);
+  };
+  visit(geometry.coordinates);
+  return bounds;
+}
+
+function prepareCoverage(geometry: MultiPolygonCoordinates): PreparedCoverage | null {
+  let bounds: Bounds | null = null;
+  const edges: CoverageEdge[] = [];
+  for (const polygon of geometry) {
+    for (const ring of polygon) {
+      for (const point of ring) {
+        if (!bounds) bounds = { minX: point[0], minY: point[1], maxX: point[0], maxY: point[1] };
+        else {
+          bounds.minX = Math.min(bounds.minX, point[0]);
+          bounds.minY = Math.min(bounds.minY, point[1]);
+          bounds.maxX = Math.max(bounds.maxX, point[0]);
+          bounds.maxY = Math.max(bounds.maxY, point[1]);
+        }
+      }
+      for (let i = 1; i < ring.length; i++) {
+        const start = ring[i - 1];
+        const end = ring[i];
+        edges.push({
+          start, end,
+          minX: Math.min(start[0], end[0]),
+          minY: Math.min(start[1], end[1]),
+          maxX: Math.max(start[0], end[0]),
+          maxY: Math.max(start[1], end[1]),
+        });
+      }
+    }
+  }
+  return bounds ? { geometry, bounds, edges } : null;
+}
+
 const clipping = polygonClipping as unknown as {
   union: (...geometries: MultiPolygonCoordinates[]) => MultiPolygonCoordinates;
   difference: (subject: MultiPolygonCoordinates, ...clips: MultiPolygonCoordinates[]) => MultiPolygonCoordinates;
@@ -88,14 +160,10 @@ function interpolate(start: Position2D, end: Position2D, t: number): Position2D 
   return [start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t];
 }
 
-function clipLineToCoverage(line: Position2D[], coverage: MultiPolygonCoordinates): Position2D[][] {
+function clipLineToCoverage(line: Position2D[], prepared: PreparedCoverage): Position2D[][] {
+  const coverage = prepared.geometry;
   if (line.length < 2 || coverage.length === 0) return [];
-  const edges: Array<[Position2D, Position2D]> = [];
-  for (const polygon of coverage) {
-    for (const ring of polygon) {
-      for (let i = 1; i < ring.length; i++) edges.push([ring[i - 1], ring[i]]);
-    }
-  }
+  const edges = prepared.edges;
 
   const result: Position2D[][] = [];
   let current: Position2D[] = [];
@@ -108,8 +176,15 @@ function clipLineToCoverage(line: Position2D[], coverage: MultiPolygonCoordinate
     const start = line[segmentIndex - 1];
     const end = line[segmentIndex];
     const parameters = [0, 1];
-    for (const [edgeStart, edgeEnd] of edges) {
-      const t = segmentIntersectionParameter(start, end, edgeStart, edgeEnd);
+    const segmentBounds: Bounds = {
+      minX: Math.min(start[0], end[0]),
+      minY: Math.min(start[1], end[1]),
+      maxX: Math.max(start[0], end[0]),
+      maxY: Math.max(start[1], end[1]),
+    };
+    for (const edge of edges) {
+      if (!boundsOverlap(segmentBounds, edge)) continue;
+      const t = segmentIntersectionParameter(start, end, edge.start, edge.end);
       if (t !== null) parameters.push(t);
     }
     parameters.sort((a, b) => a - b);
@@ -141,9 +216,12 @@ function clipLineToCoverage(line: Position2D[], coverage: MultiPolygonCoordinate
   return result;
 }
 
-function clipFeatureToCoverage(feature: GeoJSON.Feature, coverage: MultiPolygonCoordinates): GeoJSON.Feature[] {
+function clipFeatureToCoverage(feature: GeoJSON.Feature, prepared: PreparedCoverage): GeoJSON.Feature[] {
+  const coverage = prepared.geometry;
   const geometry = feature.geometry;
   if (!geometry) return [];
+  const bounds = geometryBounds(geometry);
+  if (!bounds || !boundsOverlap(bounds, prepared.bounds)) return [];
   if (geometry.type === 'Point') {
     return cm93PointInCoverage(pointFromPosition(geometry.coordinates), coverage) ? [feature] : [];
   }
@@ -152,14 +230,14 @@ function clipFeatureToCoverage(feature: GeoJSON.Feature, coverage: MultiPolygonC
     return coordinates.length ? [{ ...feature, geometry: { type: 'MultiPoint', coordinates } }] : [];
   }
   if (geometry.type === 'LineString') {
-    const paths = clipLineToCoverage(geometry.coordinates.map(pointFromPosition), coverage);
+    const paths = clipLineToCoverage(geometry.coordinates.map(pointFromPosition), prepared);
     if (!paths.length) return [];
     return [{ ...feature, geometry: paths.length === 1
       ? { type: 'LineString', coordinates: paths[0] }
       : { type: 'MultiLineString', coordinates: paths } }];
   }
   if (geometry.type === 'MultiLineString') {
-    const paths = geometry.coordinates.flatMap((line) => clipLineToCoverage(line.map(pointFromPosition), coverage));
+    const paths = geometry.coordinates.flatMap((line) => clipLineToCoverage(line.map(pointFromPosition), prepared));
     if (!paths.length) return [];
     return [{ ...feature, geometry: paths.length === 1
       ? { type: 'LineString', coordinates: paths[0] }
@@ -252,15 +330,21 @@ export function buildCm93CoverageQuiltFeatures(
     }
   }
 
+  const preparedCoverageByScale: Partial<Record<Cm93ScaleCode, PreparedCoverage>> = {};
+  for (const [scale, coverage] of Object.entries(coverageByScale) as Array<[Cm93ScaleCode, MultiPolygonCoordinates]>) {
+    const prepared = prepareCoverage(coverage);
+    if (prepared) preparedCoverageByScale[scale] = prepared;
+  }
+
   const features: GeoJSON.Feature[] = [];
   for (const feature of currentFeatures) {
     if (isCoverageFeature(feature) || isMetadataFeature(feature) || !feature.geometry) continue;
     const scale = String(feature.properties?.cm93Scale ?? '').toUpperCase() as Cm93ScaleCode;
     const scaleIndex = CM93_SCALE_ORDER.indexOf(scale);
     if (scaleIndex < 0 || scaleIndex > targetIndex) continue;
-    const coverage = coverageByScale[scale];
-    if (!coverage?.length) continue;
-    features.push(...clipFeatureToCoverage(feature, coverage));
+    const prepared = preparedCoverageByScale[scale];
+    if (!prepared) continue;
+    features.push(...clipFeatureToCoverage(feature, prepared));
   }
 
   return { features, coverageByScale, warnings };
