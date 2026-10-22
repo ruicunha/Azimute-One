@@ -1,22 +1,60 @@
 import { buildCm93CoverageQuiltFeatures, type Cm93PolygonClippingEngine } from './cm93-quilt-geometry.ts';
 import type { Cm93ScaleCode } from './cm93-quilt.ts';
 
-type CacheEntry = { key: string; value: unknown; savedAt: number };
+type CacheEntry = {
+  key: string;
+  value: unknown;
+  savedAt: number;
+  lastAccessedAt: number;
+  sizeBytes: number;
+};
 type RequestMessage =
   | { id: number; type: 'build'; key: string; features: GeoJSON.Feature[]; scale: Cm93ScaleCode; engine: Cm93PolygonClippingEngine }
   | { id: number; type: 'clear' };
 
 const DB_NAME = 'azimute-one-cm93-cache';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'quilt-results';
-const MAX_ENTRIES = 4;
+const CACHE_BUDGET_BYTES = 250 * 1024 * 1024;
+
+function estimateSizeBytes(value: unknown): number {
+  // IndexedDB stores structured-clone data, so the JSON UTF-8 size is an
+  // estimate rather than an exact measurement. It provides a consistent
+  // budget for comparing entries without relying on browser-specific quotas.
+  const serialized = JSON.stringify(value);
+  return new TextEncoder().encode(serialized ?? 'null').byteLength;
+}
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const database = request.result;
-      if (!database.objectStoreNames.contains(STORE_NAME)) database.createObjectStore(STORE_NAME, { keyPath: 'key' });
+      const transaction = request.transaction;
+      if (!database.objectStoreNames.contains(STORE_NAME)) {
+        database.createObjectStore(STORE_NAME, { keyPath: 'key' });
+      }
+
+      // Upgrade the previous four-entry cache in place. Existing entries are
+      // retained, assigned estimated sizes, and ordered by their previous save
+      // time until real accesses establish the new LRU order.
+      if ((event as IDBVersionChangeEvent).oldVersion < 2 && transaction) {
+        const store = transaction.objectStore(STORE_NAME);
+        const cursorRequest = store.openCursor();
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (!cursor) return;
+          const entry = cursor.value as Partial<CacheEntry> & { value: unknown; key: string };
+          const savedAt = typeof entry.savedAt === 'number' ? entry.savedAt : 0;
+          cursor.update({
+            ...entry,
+            savedAt,
+            lastAccessedAt: typeof entry.lastAccessedAt === 'number' ? entry.lastAccessedAt : savedAt,
+            sizeBytes: typeof entry.sizeBytes === 'number' ? entry.sizeBytes : estimateSizeBytes(entry.value),
+          } satisfies CacheEntry);
+          cursor.continue();
+        };
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error('Could not open the CM93 browser cache.'));
@@ -27,10 +65,23 @@ async function readEntry(key: string): Promise<unknown | null> {
   const database = await openDatabase();
   try {
     return await new Promise((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, 'readonly');
-      const request = transaction.objectStore(STORE_NAME).get(key) as IDBRequest<CacheEntry | undefined>;
-      request.onsuccess = () => resolve(request.result?.value ?? null);
-      request.onerror = () => reject(request.error);
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.get(key) as IDBRequest<CacheEntry | undefined>;
+      let value: unknown | null = null;
+      request.onsuccess = () => {
+        const entry = request.result;
+        if (!entry) return;
+        value = entry.value ?? null;
+        store.put({
+          ...entry,
+          sizeBytes: typeof entry.sizeBytes === 'number' ? entry.sizeBytes : estimateSizeBytes(entry.value),
+          lastAccessedAt: Date.now(),
+        } satisfies CacheEntry);
+      };
+      transaction.oncomplete = () => resolve(value);
+      transaction.onerror = () => reject(transaction.error ?? new Error('Could not read the CM93 browser cache.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('CM93 cache read was aborted.'));
     });
   } finally {
     database.close();
@@ -38,26 +89,42 @@ async function readEntry(key: string): Promise<unknown | null> {
 }
 
 async function writeEntry(key: string, value: unknown): Promise<void> {
+  const sizeBytes = estimateSizeBytes(value);
+  // A single quilt larger than the entire budget is useful for this render,
+  // but should not be persisted because it would immediately evict everything.
+  if (sizeBytes > CACHE_BUDGET_BYTES) return;
+
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readwrite');
-      transaction.objectStore(STORE_NAME).put({ key, value, savedAt: Date.now() } satisfies CacheEntry);
+      const store = transaction.objectStore(STORE_NAME);
+      const now = Date.now();
+      store.put({ key, value, savedAt: now, lastAccessedAt: now, sizeBytes } satisfies CacheEntry);
+
+      const entriesRequest = store.getAll() as IDBRequest<CacheEntry[]>;
+      entriesRequest.onsuccess = () => {
+        const entries = entriesRequest.result;
+        let totalBytes = entries.reduce((total, entry) =>
+          total + (typeof entry.sizeBytes === 'number' ? entry.sizeBytes : estimateSizeBytes(entry.value)), 0);
+
+        // Least-recently-used eviction: accesses update lastAccessedAt, so the
+        // oldest entry is removed first until the estimated payload is within
+        // the 250 MiB budget. Keep the newly written entry whenever possible.
+        const oldestFirst = entries
+          .filter((entry) => entry.key !== key)
+          .sort((a, b) => (a.lastAccessedAt ?? a.savedAt ?? 0) - (b.lastAccessedAt ?? b.savedAt ?? 0));
+
+        for (const entry of oldestFirst) {
+          if (totalBytes <= CACHE_BUDGET_BYTES) break;
+          store.delete(entry.key);
+          totalBytes -= typeof entry.sizeBytes === 'number' ? entry.sizeBytes : estimateSizeBytes(entry.value);
+        }
+      };
+      entriesRequest.onerror = () => reject(entriesRequest.error ?? new Error('Could not inspect CM93 cache size.'));
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not persist the CM93 quilt cache.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('CM93 quilt cache write was aborted.'));
-    });
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, 'readwrite');
-      const store = transaction.objectStore(STORE_NAME);
-      const request = store.getAll() as IDBRequest<CacheEntry[]>;
-      request.onsuccess = () => {
-        const entries = request.result.sort((a, b) => b.savedAt - a.savedAt);
-        for (const entry of entries.slice(MAX_ENTRIES)) store.delete(entry.key);
-      };
-      request.onerror = () => reject(request.error);
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error);
     });
   } finally {
     database.close();
