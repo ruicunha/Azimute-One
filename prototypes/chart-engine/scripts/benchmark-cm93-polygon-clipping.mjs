@@ -201,9 +201,11 @@ let mismatched = 0;
 let comparisonErrors = 0;
 let totalSymmetricDifferenceArea = 0;
 let maxSymmetricDifferenceArea = 0;
+const mismatchDetails = [];
 const currentReference = runBatch(polygonClipping, polygonCases);
 const alternativeReference = runBatch(martinez, polygonCases);
 for (let i = 0; i < polygonCases.length; i++) {
+  const item = polygonCases[i];
   const a = currentReference.outputs[i];
   const b = alternativeReference.outputs[i];
   if (a === null || b === null) {
@@ -215,7 +217,27 @@ for (let i = 0; i < polygonCases.length; i++) {
     compared++;
     totalSymmetricDifferenceArea += difference;
     maxSymmetricDifferenceArea = Math.max(maxSymmetricDifferenceArea, difference);
-    if (difference > 1e-12) mismatched++;
+    if (difference > 1e-12) {
+      mismatched++;
+      if (mismatchDetails.length < 20) {
+        const properties = item.feature.properties ?? {};
+        mismatchDetails.push({
+          caseIndex: i,
+          featureClass: properties.cm93Class ?? properties.class ?? null,
+          featureName: properties.name ?? properties.label ?? null,
+          featureId: properties.id ?? properties.cm93Id ?? null,
+          scale: properties.cm93Scale ?? null,
+          inputGeometryType: item.feature.geometry.type,
+          inputBounds: geometryBounds(item.feature.geometry),
+          candidateCoverageCount: item.candidates.length,
+          currentPolygonCount: a.length,
+          alternativePolygonCount: b.length,
+          currentAreaDegreesSquared: areaOfMultiPolygon(a),
+          alternativeAreaDegreesSquared: areaOfMultiPolygon(b),
+          symmetricDifferenceAreaDegreesSquared: difference,
+        });
+      }
+    }
   } catch {
     comparisonErrors++;
   }
