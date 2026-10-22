@@ -261,7 +261,15 @@ export default function App() {
   const visibleCm93PointClassesRef = useRef<string[]>([]);
   const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number }; cacheTimings?: Cm93CacheTimings & { geoJsonPreparationMs?: number }; geometryMetrics?: import('./cm93-quilt-geometry').Cm93CoverageQuiltMetrics; quiltCacheHit?: boolean; quiltCacheSource?: 'memory' | 'indexeddb' | 'built' } | null>(null);
   const [cm93CacheTelemetry, setCm93CacheTelemetry] = useState<Cm93CacheTelemetry | null>(null);
-  useEffect(() => onCm93CacheTelemetry((telemetry) => setCm93CacheTelemetry(telemetry)), []);
+  useEffect(() => onCm93CacheTelemetry((telemetry, timings) => {
+    setCm93CacheTelemetry(telemetry);
+    if (timings?.telemetryMs !== undefined) {
+      setCm93QuiltStats((current) => current ? {
+        ...current,
+        cacheTimings: { ...(current.cacheTimings ?? {}), telemetryMs: timings.telemetryMs },
+      } : current);
+    }
+  }), []);
   const [cm93CacheFallbacks, setCm93CacheFallbacks] = useState(0);
   const [cm93ClickDebug, setCm93ClickDebug] = useState<string | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
