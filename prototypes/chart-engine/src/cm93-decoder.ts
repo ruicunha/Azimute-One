@@ -784,6 +784,133 @@ export type Cm93GeoJsonResult = {
   warnings: string[];
 };
 
+const CM93_OFFSET_MERCATOR_RADIUS_METERS = 6_378_388;
+
+function collectGeometryPositions(geometry: GeoJSON.Geometry): GeoJSON.Position[] {
+  const positions: GeoJSON.Position[] = [];
+  const visit = (value: unknown): void => {
+    if (!Array.isArray(value)) return;
+    if (value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number') {
+      positions.push(value as GeoJSON.Position);
+      return;
+    }
+    for (const child of value) visit(child);
+  };
+  if (geometry.type === 'GeometryCollection') {
+    for (const child of geometry.geometries) positions.push(...collectGeometryPositions(child));
+  } else {
+    visit(geometry.coordinates);
+  }
+  return positions;
+}
+
+function geometryCenter(geometry: GeoJSON.Geometry): [number, number] | null {
+  const positions = collectGeometryPositions(geometry);
+  if (!positions.length) return null;
+  const longitudes = positions.map((position) => position[0]);
+  const latitudes = positions.map((position) => position[1]);
+  return [
+    (Math.min(...longitudes) + Math.max(...longitudes)) / 2,
+    (Math.min(...latitudes) + Math.max(...latitudes)) / 2,
+  ];
+}
+
+function pointInRing(point: [number, number], ring: GeoJSON.Position[]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i];
+    const b = ring[j];
+    const cross = (point[0] - a[0]) * (b[1] - a[1]) - (point[1] - a[1]) * (b[0] - a[0]);
+    const dot = (point[0] - a[0]) * (b[0] - a[0]) + (point[1] - a[1]) * (b[1] - a[1]);
+    const lengthSquared = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2;
+    if (Math.abs(cross) < 1e-10 && dot >= -1e-10 && dot <= lengthSquared + 1e-10) return true;
+    if ((a[1] > point[1]) !== (b[1] > point[1]) &&
+        point[0] < ((b[0] - a[0]) * (point[1] - a[1]) / (b[1] - a[1]) + a[0])) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function geometryContainsPoint(geometry: GeoJSON.Geometry, point: [number, number]): boolean {
+  const polygons = geometry.type === 'Polygon'
+    ? [geometry.coordinates]
+    : geometry.type === 'MultiPolygon'
+      ? geometry.coordinates
+      : [];
+  return polygons.some((polygon) =>
+    polygon.length > 0 &&
+    pointInRing(point, polygon[0]) &&
+    !polygon.slice(1).some((hole) => pointInRing(point, hole as GeoJSON.Position[])),
+  );
+}
+
+/** Apply CM93's per-M_COVR WGS84 offsets in projected metres. */
+export function cm93ShiftWgs84PositionByProjectedOffset(
+  position: GeoJSON.Position,
+  offsetX: number,
+  offsetY: number,
+): GeoJSON.Position {
+  if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY) || (offsetX === 0 && offsetY === 0)) {
+    return position;
+  }
+  const radius = CM93_OFFSET_MERCATOR_RADIUS_METERS;
+  const longitude = position[0];
+  const latitude = Math.max(-89.999999, Math.min(89.999999, position[1]));
+  const easting = radius * longitude * Math.PI / 180 - offsetX;
+  const northing = radius * Math.log(Math.tan(Math.PI / 4 + latitude * Math.PI / 360)) - offsetY;
+  const shiftedLongitude = ((easting / radius * 180 / Math.PI + 540) % 360) - 180;
+  const shiftedLatitude = (2 * Math.atan(Math.exp(northing / radius)) - Math.PI / 2) * 180 / Math.PI;
+  return [shiftedLongitude, shiftedLatitude, ...position.slice(2)];
+}
+
+function shiftGeometryByProjectedOffset(
+  geometry: GeoJSON.Geometry,
+  offsetX: number,
+  offsetY: number,
+): GeoJSON.Geometry {
+  const shiftPosition = (position: GeoJSON.Position): GeoJSON.Position =>
+    cm93ShiftWgs84PositionByProjectedOffset(position, offsetX, offsetY);
+  switch (geometry.type) {
+    case 'Point':
+      return { ...geometry, coordinates: shiftPosition(geometry.coordinates) };
+    case 'MultiPoint':
+    case 'LineString':
+      return { ...geometry, coordinates: geometry.coordinates.map(shiftPosition) };
+    case 'MultiLineString':
+    case 'Polygon':
+      return { ...geometry, coordinates: geometry.coordinates.map((ring) => ring.map(shiftPosition)) };
+    case 'MultiPolygon':
+      return { ...geometry, coordinates: geometry.coordinates.map((polygon) => polygon.map((ring) => ring.map(shiftPosition))) };
+    case 'GeometryCollection':
+      return { ...geometry, geometries: geometry.geometries.map((child) => shiftGeometryByProjectedOffset(child, offsetX, offsetY)) };
+  }
+}
+
+function applyCm93CoverageOffsets(features: GeoJSON.Feature[]): void {
+  const coverageFeatures = features.filter((feature) =>
+    String(feature.properties?.cm93Class ?? '').toUpperCase() === '_M_SOR' &&
+    feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon'),
+  );
+  if (!coverageFeatures.length) return;
+
+  for (const feature of features) {
+    if (!feature.geometry || String(feature.properties?.cm93Class ?? '').toUpperCase() === '_M_SOR') continue;
+    const center = geometryCenter(feature.geometry);
+    if (!center) continue;
+    // OpenCPN defaults to the only M_COVR in a cell; when several exist it
+    // chooses the one containing the feature's unshifted centre.
+    const coverage = coverageFeatures.length === 1
+      ? coverageFeatures[0]
+      : coverageFeatures.find((candidate) => candidate.geometry && geometryContainsPoint(candidate.geometry, center));
+    if (!coverage) continue;
+    const offsetX = Number(coverage.properties?._wgsox ?? 0);
+    const offsetY = Number(coverage.properties?._wgsoy ?? 0);
+    if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY)) continue;
+    feature.geometry = shiftGeometryByProjectedOffset(feature.geometry, offsetX, offsetY);
+  }
+}
+
 /** Assemble decoded CM93 records into GeoJSON, without applying chart portrayal rules. */
 export function cm93CellToGeoJSON(cell: Cm93ParsedCell, dictionary: Cm93Dictionary): Cm93GeoJsonResult {
   const features: GeoJSON.Feature[] = [];
@@ -922,6 +1049,11 @@ export function cm93CellToGeoJSON(cell: Cm93ParsedCell, dictionary: Cm93Dictiona
     properties.cm93RelatedCount = group.length - 1;
     primary.properties = properties;
   }
+
+  // CM93 cells carry per-source WGS84 offsets on _m_sor (M_COVR) records.
+  // OpenCPN applies those offsets to chart features, while leaving the coverage
+  // polygons themselves in their original coordinates.
+  applyCm93CoverageOffsets(features);
 
   return {
     geojson: { type: 'FeatureCollection', features },
