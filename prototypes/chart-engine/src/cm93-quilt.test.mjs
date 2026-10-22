@@ -34,7 +34,7 @@ test('falls back to the nearest coarser scale when no target-scale cells exist i
   const coarse = cell('03781044.C', 'cm93/03301020/C/03781044.C');
   const result = selectCm93ViewportCells([coarse], {
     west: -9.3, south: 38.5, east: -8.9, north: 38.9,
-  }, 8);
+  }, 10.3);
 
   assert.equal(result.scale, 'D');
   assert.deepEqual(result.files, [coarse]);
@@ -46,7 +46,7 @@ test('selects coarser candidate cells so M_COVR can fill uncovered regions', () 
   const coarse = cell('03781044.C', 'cm93/03301020/C/03781044.C');
   const result = selectCm93ViewportCells([fine, coarse], {
     west: -9.4, south: 38.4, east: -8.8, north: 38.9,
-  }, 8);
+  }, 10.3);
 
   assert.deepEqual(result.files, [fine, coarse], 'include the requested scale and coarser candidate');
   assert.deepEqual(result.fillFallbackFiles, [], 'coarser candidates are not unconditionally overlaid');
@@ -70,7 +70,7 @@ test('prefers the requested E tile over a finer F tile in the same footprint', (
   const finer = cell('03851051.F', 'cm93/03301020/F/03851051.F');
   const result = selectCm93ViewportCells([requested, finer], {
     west: -9.4, south: 38.5, east: -9.3, north: 38.6,
-  }, 10);
+  }, 12.5);
 
   assert.ok(result.files.some((file) => file.name === '03851051.E'));
   assert.ok(!result.files.some((file) => file.name === '03851051.F'));
@@ -79,7 +79,7 @@ test('prefers the requested E tile over a finer F tile in the same footprint', (
 test('returns an empty selection when no scale has a cell in the viewport', () => {
   const result = selectCm93ViewportCells([], {
     west: -10, south: 37, east: -8, north: 39,
-  }, 8);
+  }, 10.3);
   assert.equal(result.scale, 'D');
   assert.deepEqual(result.files, []);
 });
@@ -131,7 +131,7 @@ test('does not select finer E/F/G cells as fill-only supplements at D scale', ()
   const g = cell('03851052.G', 'cm93/03301020/G/03851052.G');
   const result = selectCm93ViewportCells([coarse, e, g], {
     west: -9.4, south: 38.5, east: -9.2, north: 38.7,
-  }, 8);
+  }, 10.3);
 
   assert.ok(result.files.includes(coarse));
   assert.ok(!result.files.includes(e));
@@ -145,7 +145,7 @@ test('includes coarser D candidates in an E-scale quilt for coverage-aware fallb
   const detailed = cell('03851052.E', 'cm93/03301020/E/03851052.E');
   const result = selectCm93ViewportCells([coarse, detailed], {
     west: -9.4, south: 38.5, east: -9.2, north: 38.7,
-  }, 10);
+  }, 12.5);
 
   assert.ok(result.files.includes(detailed), 'keep the requested-scale cell');
   assert.ok(result.files.includes(coarse), 'load the coarser cell for uncovered regions');
@@ -158,7 +158,7 @@ test('does not add finer G fill fallbacks when the requested E cell exists', () 
   const g = cell('03851052.G', 'cm93/03301020/G/03851052.G');
   const result = selectCm93ViewportCells([e, g], {
     west: -9.4, south: 38.5, east: -9.2, north: 38.7,
-  }, 10);
+  }, 12.5);
 
   assert.ok(result.files.includes(e), 'keep the requested-scale cell');
   assert.ok(!result.files.includes(g), 'finer cells are not used as fallback for E scale');
