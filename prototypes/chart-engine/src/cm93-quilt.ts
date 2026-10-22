@@ -1,10 +1,12 @@
 /**
  * Viewport-aware CM93 V2 cell selection for the experimental chart quilt.
  *
- * The viewport renders one chart scale at a time. If no cells exist at the
- * requested scale anywhere in the viewport, selection falls back to the
- * nearest coarser scale available. Mixing scales without CM93 coverage
- * polygons causes overlapping depth areas and is not a valid quilt.
+ * The viewport prefers the requested scale. For the one-degree E/F/G grids,
+ * a missing target cell may use the next available finer cell in that same
+ * footprint. This avoids blank tiles without layering unrelated coarser
+ * chart polygons over finer data. Coarser fallback remains viewport-wide
+ * because those cells span multiple fine-grid footprints and require M_COVR
+ * coverage geometry before they can be safely mixed.
  */
 export type Cm93CellFile = {
   name: string;
@@ -59,11 +61,9 @@ function pathForCell(latitudeCell: number, longitudeCell: number, scale: string)
 }
 
 export type Cm93ViewportSelection = {
-  /** Scale requested by the current zoom; fallback is used only if it is absent. */
+  /** Scale requested by the current zoom; per-cell fine fallback may be present. */
   scale: Cm93ScaleCode;
-  /** Cells from exactly one scale, so chart layers cannot overlap across scales. */
   files: Cm93CellFile[];
-  /** Number of selected cells at each actual scale (at most one scale key). */
   scaleCounts: Partial<Record<Cm93ScaleCode, number>>;
 };
 
@@ -87,9 +87,6 @@ export function selectCm93ViewportCells(
   const east = Math.max(bounds.west, bounds.east);
   const longitudeSpan = Math.min(360, Math.max(0, east - west));
 
-  // Try one scale across the whole viewport at a time. A coarser chart may be
-  // used only when the requested scale has no cells in this viewport at all.
-  // Per-footprint mixing is unsafe without decoded CM93 coverage geometry.
   for (let scaleIndex = targetIndex; scaleIndex >= 0; scaleIndex--) {
     const scale = CM93_SCALE_ORDER[scaleIndex];
     const step = CM93_SCALE_STEPS[scale];
@@ -102,8 +99,20 @@ export function selectCm93ViewportCells(
     for (let latitudeCell = firstLatitudeCell; latitudeCell <= lastLatitudeCell; latitudeCell += step) {
       for (let longitudeCellUnwrapped = firstLongitudeCell; longitudeCellUnwrapped <= lastLongitudeCell; longitudeCellUnwrapped += step) {
         const longitudeCell = ((longitudeCellUnwrapped % 1080) + 1080) % 1080;
-        const candidatePath = pathForCell(latitudeCell, longitudeCell, scale);
-        const found = byPath.get(candidatePath);
+        let found = byPath.get(pathForCell(latitudeCell, longitudeCell, scale));
+
+        // E/F/G use the same one-degree filename grid. If the requested tile
+        // is absent, use the next available finer tile in exactly that
+        // footprint, rather than concluding that other E tiles cover the gap.
+        if (!found && scale === targetScale && (targetScale === 'E' || targetScale === 'F')) {
+          const firstFineIndex = targetIndex + 1;
+          for (let fineIndex = firstFineIndex; fineIndex < CM93_SCALE_ORDER.length; fineIndex++) {
+            const finerScale = CM93_SCALE_ORDER[fineIndex];
+            found = byPath.get(pathForCell(latitudeCell, longitudeCell, finerScale));
+            if (found) break;
+          }
+        }
+
         if (found) {
           const key = (found.webkitRelativePath || found.name).toLowerCase();
           if (!selected.has(key)) selected.set(key, found);
@@ -114,11 +123,12 @@ export function selectCm93ViewportCells(
     }
 
     if (selected.size > 0) {
-      return {
-        scale: targetScale,
-        files: [...selected.values()],
-        scaleCounts: { [scale]: selected.size },
-      };
+      const scaleCounts: Partial<Record<Cm93ScaleCode, number>> = {};
+      for (const file of selected.values()) {
+        const actualScale = (file.webkitRelativePath || file.name).split('.').pop()?.toUpperCase() as Cm93ScaleCode;
+        scaleCounts[actualScale] = (scaleCounts[actualScale] ?? 0) + 1;
+      }
+      return { scale: targetScale, files: [...selected.values()], scaleCounts };
     }
   }
 
