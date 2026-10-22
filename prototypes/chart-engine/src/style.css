@@ -52,6 +52,9 @@ h1 { margin: 0; color: #16313b; font-size: 25px; letter-spacing: -.04em; }
 .file-button input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .secondary-button { margin-top: 8px; border: 1px solid #cddbd9; background: white; color: #264c56; }
 .secondary-button:disabled { opacity: .5; cursor: wait; }
+.clipping-engine-options { display: grid; grid-template-columns: 1fr; gap: 6px; margin-top: 10px; }
+.clipping-engine-option { margin-top: 0; text-align: left; padding: 9px 11px; justify-content: flex-start; }
+.clipping-engine-option.selected { border-color: #2a6672; background: #e3eeee; color: #143e49; box-shadow: inset 3px 0 #2a6672; }
 .field-group { margin-top: 24px; }
 .palette-row { display: flex; gap: 6px; margin-top: 9px; }
 .palette-button { flex: 1; padding: 9px 4px; border: 1px solid #d4dfde; border-radius: 7px; background: white; color: #587078; font-size: 11px; }
