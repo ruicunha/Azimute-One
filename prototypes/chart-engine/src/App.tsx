@@ -1300,7 +1300,7 @@ export default function App() {
                   scales: cm93Summary.scales.map(({ code, fileCount }) => ({ code, fileCount })),
                 } : null,
                 lastMapClickDiagnostic: clickReport,
-                testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. The persistent browser quilt cache is keyed by scale, clipping engine, and selected cell file metadata. Include zoom-transition runs where detail appears late.',
+                testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. The persistent browser quilt cache is keyed by scale, clipping engine, and selected cell file metadata. quiltCacheHit identifies whether the most recent viewport update reused cached geometry. Include zoom-transition runs where detail appears late.',
               };
               void navigator.clipboard?.writeText(JSON.stringify(report, null, 2)).then(() => {
                 setMessage('CM93 performance diagnostics copied. Repeat for cold-cache and warm-cache runs.');
