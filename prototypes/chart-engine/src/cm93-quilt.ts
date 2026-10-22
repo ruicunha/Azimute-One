@@ -1,9 +1,10 @@
 /**
  * Viewport-aware CM93 V2 cell selection for the experimental chart quilt.
  *
- * Scale thresholds are provisional display-scale heuristics and intended for
- * browser evaluation, not authoritative navigation portrayal. Each target
- * cell independently falls back to the closest available coarser cell.
+ * Scale thresholds are provisional display-scale heuristics. Each viewport
+ * target footprint selects its requested scale plus available coarser cells,
+ * so coarser features can remain visible beneath gaps in finer-scale geometry.
+ * This is not an authoritative coverage-polygon implementation.
  */
 export type Cm93CellFile = {
   name: string;
@@ -63,7 +64,7 @@ function pathForCell(latitudeCell: number, longitudeCell: number, scale: string)
 export type Cm93ViewportSelection = {
   /** The scale requested by the current zoom, not necessarily every cell's scale. */
   scale: Cm93ScaleCode;
-  /** A non-overlapping-by-path set of selected cells, including per-cell fallbacks. */
+  /** Unique selected cells, ordered coarse-to-fine for stable underlay portrayal. */
   files: Cm93CellFile[];
   /** Number of selected cells at each actual scale. */
   scaleCounts: Partial<Record<Cm93ScaleCode, number>>;
@@ -100,10 +101,12 @@ export function selectCm93ViewportCells(
       const longitudeCell = ((longitudeCellUnwrapped % 1080) + 1080) % 1080;
       const centerLatitude = (latitudeCell + targetStep / 2 - 240) / 3;
       const centerLongitude = normalizedLongitude((longitudeCellUnwrapped + targetStep / 2) / 3);
-      let chosen: { file: Cm93CellFile; scale: Cm93ScaleCode } | undefined;
-
-      // Start at the requested scale and walk toward coarser scales. For each
-      // target footprint, use the finest cell that actually exists there.
+      // Select the requested scale and every available coarser scale for the
+      // same target footprint. Coarser cells are an underlay, not a substitute
+      // only when a filename is missing: finer cells can exist yet have no
+      // feature geometry at a particular point. Rendering the underlay beneath
+      // finer-scale fills lets those gaps show the coarser chart without keeping
+      // arbitrary features from a previous viewport.
       for (let scaleIndex = targetIndex; scaleIndex >= 0; scaleIndex--) {
         const scale = CM93_SCALE_ORDER[scaleIndex];
         const step = CM93_SCALE_STEPS[scale];
@@ -112,17 +115,12 @@ export function selectCm93ViewportCells(
         const candidatePath = pathForCell(candidateLatitudeCell, candidateLongitudeCell, scale);
         const found = byPath.get(candidatePath);
         if (found) {
-          chosen = { file: found, scale };
-          break;
+          const key = (found.webkitRelativePath || found.name).toLowerCase();
+          if (!selected.has(key)) selected.set(key, { file: found, scale });
         }
       }
-
-      if (chosen) {
-        const key = (chosen.file.webkitRelativePath || chosen.file.name).toLowerCase();
-        if (!selected.has(key)) selected.set(key, chosen);
-      }
       if (selected.size >= maxCells) {
-        const result = [...selected.values()];
+        const result = [...selected.values()].sort((a, b) => CM93_SCALE_ORDER.indexOf(a.scale) - CM93_SCALE_ORDER.indexOf(b.scale));
         const scaleCounts: Partial<Record<Cm93ScaleCode, number>> = {};
         for (const item of result) scaleCounts[item.scale] = (scaleCounts[item.scale] ?? 0) + 1;
         return { scale: targetScale, files: result.map((item) => item.file), scaleCounts };
@@ -130,7 +128,7 @@ export function selectCm93ViewportCells(
     }
   }
 
-  const result = [...selected.values()];
+  const result = [...selected.values()].sort((a, b) => CM93_SCALE_ORDER.indexOf(a.scale) - CM93_SCALE_ORDER.indexOf(b.scale));
   const scaleCounts: Partial<Record<Cm93ScaleCode, number>> = {};
   for (const item of result) scaleCounts[item.scale] = (scaleCounts[item.scale] ?? 0) + 1;
   return { scale: targetScale, files: result.map((item) => item.file), scaleCounts };
