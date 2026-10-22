@@ -1,4 +1,5 @@
 import polygonClipping from 'polygon-clipping';
+import * as martinez from 'martinez-polygon-clipping';
 import { CM93_SCALE_ORDER, type Cm93ScaleCode } from './cm93-quilt.ts';
 
 type Position2D = [number, number];
@@ -99,11 +100,35 @@ function prepareCoverage(geometry: MultiPolygonCoordinates): PreparedCoverage | 
   return bounds ? { geometry, bounds, edges, components } : null;
 }
 
-const clipping = polygonClipping as unknown as {
+export type Cm93PolygonClippingEngine = 'polygon-clipping' | 'martinez-polygon-clipping';
+
+type PolygonClippingOperations = {
   union: (...geometries: MultiPolygonCoordinates[]) => MultiPolygonCoordinates;
   difference: (subject: MultiPolygonCoordinates, ...clips: MultiPolygonCoordinates[]) => MultiPolygonCoordinates;
   intersection: (subject: MultiPolygonCoordinates, ...clips: MultiPolygonCoordinates[]) => MultiPolygonCoordinates;
 };
+
+function getClippingOperations(engine: Cm93PolygonClippingEngine): PolygonClippingOperations {
+  if (engine === 'martinez-polygon-clipping') {
+    // Martinez exposes binary Boolean operations, so fold them for the
+    // variadic union/difference calls used by the existing quilt algorithm.
+    return {
+      union: (...geometries) => geometries.reduce<MultiPolygonCoordinates>(
+        (result, geometry) => result.length ? (martinez.union(result, geometry) ?? []) : geometry,
+        [],
+      ),
+      difference: (subject, ...clips) => clips.reduce<MultiPolygonCoordinates>(
+        (result, clip) => result.length ? (martinez.diff(result, clip) ?? []) : result,
+        subject,
+      ),
+      intersection: (subject, ...clips) => clips.reduce<MultiPolygonCoordinates>(
+        (result, clip) => result.length ? (martinez.intersection(result, clip) ?? []) : result,
+        subject,
+      ),
+    };
+  }
+  return polygonClipping as unknown as PolygonClippingOperations;
+}
 
 function pointOnSegment(point: Position2D, start: Position2D, end: Position2D): boolean {
   const dx = end[0] - start[0];
@@ -150,7 +175,7 @@ function toMultiPolygon(geometry: GeoJSON.Geometry): MultiPolygonCoordinates | n
   return null;
 }
 
-function unionRegions(regions: MultiPolygonCoordinates[]): MultiPolygonCoordinates {
+function unionRegions(regions: MultiPolygonCoordinates[], clipping: PolygonClippingOperations): MultiPolygonCoordinates {
   const nonEmpty = regions.filter((region) => region.length > 0);
   if (!nonEmpty.length) return [];
   if (nonEmpty.length === 1) return nonEmpty[0];
@@ -236,7 +261,7 @@ function clipLineToCoverage(line: Position2D[], prepared: PreparedCoverage): Pos
   return result;
 }
 
-function clipFeatureToCoverage(feature: GeoJSON.Feature, prepared: PreparedCoverage, precomputedBounds?: Bounds | null): GeoJSON.Feature[] {
+function clipFeatureToCoverage(feature: GeoJSON.Feature, prepared: PreparedCoverage, clipping: PolygonClippingOperations, precomputedBounds?: Bounds | null): GeoJSON.Feature[] {
   const coverage = prepared.geometry;
   const geometry = feature.geometry;
   if (!geometry) return [];
@@ -342,7 +367,9 @@ export type Cm93CoverageQuiltResult = {
 export function buildCm93CoverageQuiltFeatures(
   currentFeatures: GeoJSON.Feature[],
   targetScale: Cm93ScaleCode,
+  clippingEngine: Cm93PolygonClippingEngine = 'polygon-clipping',
 ): Cm93CoverageQuiltResult {
+  const clipping = getClippingOperations(clippingEngine);
   const metrics: Cm93CoverageQuiltMetrics = {
     collectCoverageMs: 0, coverageAllocationMs: 0, prepareCoverageMs: 0,
     featureBoundsMs: 0, pointClipMs: 0, lineClipMs: 0, polygonClipMs: 0, featureLoopMs: 0,
@@ -376,7 +403,7 @@ export function buildCm93CoverageQuiltFeatures(
     const scale = CM93_SCALE_ORDER[scaleIndex];
     let rawCoverage: MultiPolygonCoordinates;
     try {
-      rawCoverage = unionRegions(rawRegions.get(scale) ?? []);
+      rawCoverage = unionRegions(rawRegions.get(scale) ?? [], clipping);
     } catch {
       warnings.push('Could not combine M_COVR coverage for CM93 scale ' + scale + '; this scale was skipped.');
       rawCoverage = [];
@@ -394,7 +421,7 @@ export function buildCm93CoverageQuiltFeatures(
     }
     coverageByScale[scale] = effectiveCoverage;
     try {
-      allocatedCoverage = unionRegions([allocatedCoverage, rawCoverage]);
+      allocatedCoverage = unionRegions([allocatedCoverage, rawCoverage], clipping);
     } catch {
       // Retain the prior allocation. A failed union must never authorize a
       // coarser chart to overwrite an already-known finer coverage region.
@@ -442,7 +469,7 @@ export function buildCm93CoverageQuiltFeatures(
         (count, component) => count + (boundsOverlap(bounds, component.bounds) ? 1 : 0), 0,
       );
     }
-    const clipped = clipFeatureToCoverage(feature, prepared, bounds);
+    const clipped = clipFeatureToCoverage(feature, prepared, clipping, bounds);
     const clipMs = performance.now() - clipStartedAt;
     if (geometryType === 'Point' || geometryType === 'MultiPoint') {
       metrics.pointFeatureCount++;
