@@ -847,7 +847,7 @@ export default function App() {
       });
       setStatus('ready');
       setMessage('Automatic CM93 detail: no cells at scale ' + selection.scale +
-        ' or any coarser fallback scale cover this viewport.' +
+        ' or any coarser scale were found in this viewport.' +
         (map.getSource('cm93-active-cell') ? ' The overview remains visible.' : ' No CM93 coverage is available here.'));
       return;
     }
@@ -966,7 +966,7 @@ export default function App() {
       .map(([scale, count]) => scale + ':' + count)
       .join(', ');
     const pointCounts = new Map<string, number>();
-    for (const feature of features) { if (feature.geometry.type === 'Point' || feature.geometry.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } }
+    for (const feature of quiltFeatures) { if (feature.geometry?.type === 'Point' || feature.geometry?.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } }
     setCm93PointClassCounts([...pointCounts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count));
     const classCounts = new Map<string, { count: number; geometries: Set<string> }>();
     for (const feature of quiltFeatures) {
@@ -994,9 +994,9 @@ export default function App() {
       return cm93Scales.indexOf(cellScale) < cm93Scales.indexOf(selection.scale);
     }).length;
     setMessage('Automatic CM93 detail: ' + (selection.files.length + selection.fillFallbackFiles.length) + ' ' + selection.scale +
-      '-scale and coarser underlay cells, ' + features.length.toLocaleString() + ' current features (' + decoded +
+      '-scale coverage quilt, ' + quiltFeatures.length.toLocaleString() + ' clipped features (' + decoded +
       ' newly decoded, ' + (selection.files.length + selection.fillFallbackFiles.length - decoded - failed) + ' from cache); ' +
-      underlayCellCount + ' coarser-scale underlay cells; ' + emptyCells + ' empty cells.' +
+      underlayCellCount + ' coarser candidate cells; ' + emptyCells + ' empty cells.' +
       (failed ? ' ' + failed + ' cells failed to decode: ' + failedCellNames.slice(0, 5).join(', ') + (failedCellNames.length > 5 ? ', …' : '') + '.' : '') +
       (coverageQuilt.warnings.length ? ' Coverage warnings: ' + coverageQuilt.warnings.join(' ') : ''));
   }, []);
