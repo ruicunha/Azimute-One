@@ -8,7 +8,7 @@ import { planChartQuilt } from './chart-quilt';
 import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
 import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
 import { buildCm93QuiltFeatures, selectCm93ViewportCells, type Cm93ScaleCode } from './cm93-quilt';
-import { buildCm93CoverageQuiltFeatures, cm93PointInCoverage, type Cm93MultiPolygonCoordinates } from './cm93-quilt-geometry';
+import { buildCm93CoverageQuiltFeatures, cm93PointInCoverage, type Cm93MultiPolygonCoordinates, type Cm93PolygonClippingEngine } from './cm93-quilt-geometry';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -244,6 +244,7 @@ export default function App() {
   const [cmapVisible, setCmapVisible] = useState(false);
   const [cm93Summary, setCm93Summary] = useState<Cm93DatasetSummary | null>(null);
   const [cm93AutoEnabled, setCm93AutoEnabled] = useState(false);
+  const [cm93ClippingEngine, setCm93ClippingEngine] = useState<Cm93PolygonClippingEngine>('polygon-clipping');
   const [cm93PointClassCounts, setCm93PointClassCounts] = useState<Array<{ name: string; count: number }>>([]);
   const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
   const visibleCm93PointClassesRef = useRef<string[]>([]);
@@ -919,7 +920,7 @@ export default function App() {
     // or contain no usable geometry. That creates stale overlays and makes the
     // chart depend on navigation history.
     const quiltStartedAt = performance.now();
-    const coverageQuilt = buildCm93CoverageQuiltFeatures(features, selection.scale);
+    const coverageQuilt = buildCm93CoverageQuiltFeatures(features, selection.scale, cm93ClippingEngine);
     cm93CoverageByScaleRef.current = coverageQuilt.coverageByScale;
     const quiltFeatures = buildCm93QuiltFeatures(coverageQuilt.features);
     const quiltMs = performance.now() - quiltStartedAt;
@@ -1023,7 +1024,7 @@ export default function App() {
       underlayCellCount + ' coarser candidate cells; ' + emptyCells + ' empty cells.' +
       (failed ? ' ' + failed + ' cells failed to decode: ' + failedCellNames.slice(0, 5).join(', ') + (failedCellNames.length > 5 ? ', …' : '') + '.' : '') +
       (coverageQuilt.warnings.length ? ' Coverage warnings: ' + coverageQuilt.warnings.join(' ') : ''));
-  }, []);
+  }, [cm93ClippingEngine]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1114,6 +1115,15 @@ export default function App() {
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93Overview()}>Render CM93 dataset overview</button>}
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={toggleCm93Auto}>{cm93AutoEnabled ? 'Disable automatic CM93 detail' : 'Enable automatic CM93 detail'}</button>}
           {cm93Summary?.isLikelyCm93V2 && <div className="legend">
+            <span className="field-label">CM93 POLYGON CLIPPING ENGINE</span>
+            <p>Switch the polygon Boolean library used for CM93 coverage and polygon clipping. Changing engines rebuilds the current viewport when automatic CM93 detail is enabled.</p>
+            <div className="clipping-engine-options" role="group" aria-label="CM93 polygon clipping engine">
+              <button className={cm93ClippingEngine === 'polygon-clipping' ? 'secondary-button clipping-engine-option selected' : 'secondary-button clipping-engine-option'} type="button" aria-pressed={cm93ClippingEngine === 'polygon-clipping'} onClick={() => setCm93ClippingEngine('polygon-clipping')}>Current: polygon-clipping</button>
+              <button className={cm93ClippingEngine === 'martinez-polygon-clipping' ? 'secondary-button clipping-engine-option selected' : 'secondary-button clipping-engine-option'} type="button" aria-pressed={cm93ClippingEngine === 'martinez-polygon-clipping'} onClick={() => setCm93ClippingEngine('martinez-polygon-clipping')}>Alternative: Martinez</button>
+            </div>
+            <p>Active engine: <strong>{cm93ClippingEngine}</strong>. Martinez is experimental; compare coastline, depth areas and scale transitions carefully.</p>
+          </div>}
+          {cm93Summary?.isLikelyCm93V2 && <div className="legend">
             <span className="field-label">CM93 CLICK DIAGNOSTICS</span>
             <p>Click any point on the map after zooming to the problem area. A JSON report is copied automatically with coordinates, zoom/bounds, candidate cell paths and scales, cached decode counts, and rendered feature details.</p>
             <button className="secondary-button" type="button" disabled={!cm93ClickDebug} onClick={() => {
@@ -1150,6 +1160,7 @@ export default function App() {
               })() : null;
               const report = {
                 reportType: 'Azimute One CM93 performance diagnostics',
+                polygonClippingEngine: cm93ClippingEngine,
                 capturedAt: new Date().toISOString(),
                 performance: {
                   timingsMs: cm93QuiltStats.timings ?? null,
