@@ -1,10 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, assembleCm93VectorPaths, cm93CellToGeoJSON, cm93RingsToPolygonCoordinates, cm93RelatedObjectPriority, cm93GridPointToWgs84, parseCm93Dictionaries } from './cm93-decoder.ts';
+import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, assembleCm93VectorPaths, cm93CellToGeoJSON, cm93RingsToPolygonCoordinates, cm93RelatedObjectPriority, cm93GridPointToWgs84, cm93ShiftWgs84PositionByProjectedOffset, parseCm93Dictionaries } from './cm93-decoder.ts';
 
 const firstCellHeader = Uint8Array.from([
   0x48, 0xc5, 0x49, 0x73, 0xc5, 0xc5, 0x74, 0x40, 0xc5, 0xc5,
 ]);
+
+test('applies CM93 M_COVR offsets in projected metres using OpenCPN sign convention', () => {
+  const shifted = cm93ShiftWgs84PositionByProjectedOffset([0, 0], -100, -200);
+  assert.ok(Math.abs(shifted[0] - 0.0008983) < 0.00001, 'negative east offset moves chart geometry east');
+  assert.ok(Math.abs(shifted[1] - 0.0017966) < 0.00002, 'negative north offset moves chart geometry north');
+  assert.deepEqual(cm93ShiftWgs84PositionByProjectedOffset([12, 45], 0, 0), [12, 45]);
+});
 
 test('decodes and validates a real CM93 V2 cell header', () => {
   const header = decodeCm93CellHeader(firstCellHeader, 2752, '00900000.A');
