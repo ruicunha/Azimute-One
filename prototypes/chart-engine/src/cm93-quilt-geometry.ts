@@ -28,25 +28,24 @@ function boundsOverlap(a: Bounds, b: Bounds): boolean {
 }
 
 function geometryBounds(geometry: GeoJSON.Geometry): Bounds | null {
-  let bounds: Bounds | null = null;
+  const bounds: Bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  let found = false;
   const visit = (value: unknown): void => {
     if (!Array.isArray(value)) return;
     if (value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number') {
       const x = value[0];
       const y = value[1];
-      if (!bounds) bounds = { minX: x, minY: y, maxX: x, maxY: y };
-      else {
-        bounds.minX = Math.min(bounds.minX, x);
-        bounds.minY = Math.min(bounds.minY, y);
-        bounds.maxX = Math.max(bounds.maxX, x);
-        bounds.maxY = Math.max(bounds.maxY, y);
-      }
+      bounds.minX = Math.min(bounds.minX, x);
+      bounds.minY = Math.min(bounds.minY, y);
+      bounds.maxX = Math.max(bounds.maxX, x);
+      bounds.maxY = Math.max(bounds.maxY, y);
+      found = true;
       return;
     }
     for (const child of value) visit(child);
   };
   visit(geometry.coordinates);
-  return bounds;
+  return found ? bounds : null;
 }
 
 function prepareCoverage(geometry: MultiPolygonCoordinates): PreparedCoverage | null {
