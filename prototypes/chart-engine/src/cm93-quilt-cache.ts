@@ -1,6 +1,19 @@
 import type { Cm93PolygonClippingEngine } from './cm93-quilt-geometry.ts';
 import type { Cm93ScaleCode } from './cm93-quilt.ts';
 
+export type Cm93CacheTelemetry = {
+  hits: number;
+  misses: number;
+  readErrors: number;
+  writes: number;
+  writeErrors: number;
+  evictions: number;
+  skippedOversized: number;
+  entries: number;
+  estimatedBytes: number;
+  budgetBytes: number;
+};
+
 type WorkerReply = { id: number; ok: boolean; value?: unknown; error?: string };
 type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error) => void };
 let worker: Worker | null = null;
@@ -56,7 +69,7 @@ export async function getOrBuildCm93CachedQuilt<T>(
   features: GeoJSON.Feature[],
   scale: Cm93ScaleCode,
   engine: Cm93PolygonClippingEngine,
-): Promise<{ value: T; cacheHit: boolean } | null> {
+): Promise<{ value: T; cacheHit: boolean; telemetry?: Cm93CacheTelemetry } | null> {
   try {
     return await buildRequest(key, features, scale, engine) as { value: T; cacheHit: boolean } | null;
   } catch {
