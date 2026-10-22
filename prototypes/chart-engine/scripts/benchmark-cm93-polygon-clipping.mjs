@@ -53,7 +53,11 @@ const failedCells = [];
 for (const file of selection.files) {
   try {
     const cell = parseCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
-    decodedFeatures.push(...cm93CellToGeoJSON(cell, dictionary).geojson.features);
+    const scale = (file.webkitRelativePath || file.name).split('.').pop()?.toUpperCase() ?? 'A';
+    decodedFeatures.push(...cm93CellToGeoJSON(cell, dictionary).geojson.features.map((feature) => ({
+      ...feature,
+      properties: { ...(feature.properties ?? {}), cm93Scale: scale },
+    })));
   } catch (error) {
     failedCells.push({ file: file.name, error: String(error) });
   }
