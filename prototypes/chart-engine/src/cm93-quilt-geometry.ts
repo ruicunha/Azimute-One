@@ -28,6 +28,16 @@ function boundsOverlap(a: Bounds, b: Bounds): boolean {
 }
 
 function geometryBounds(geometry: GeoJSON.Geometry): Bounds | null {
+  if (geometry.type === 'GeometryCollection') {
+    const childBounds = geometry.geometries.map(geometryBounds).filter((item): item is Bounds => item !== null);
+    if (!childBounds.length) return null;
+    return childBounds.reduce((result, item) => ({
+      minX: Math.min(result.minX, item.minX),
+      minY: Math.min(result.minY, item.minY),
+      maxX: Math.max(result.maxX, item.maxX),
+      maxY: Math.max(result.maxY, item.maxY),
+    }));
+  }
   const bounds: Bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
   let found = false;
   const visit = (value: unknown): void => {
