@@ -25,7 +25,7 @@ jobs:
 
       - name: Install benchmark-only alternative
         working-directory: prototypes/chart-engine
-        run: npm install --no-save martinez-polygon-clipping
+        run: npm install --no-save martinez-polygon-clipping@0.9.0
 
       - name: Download public CM93 sample dataset
         working-directory: prototypes/chart-engine
