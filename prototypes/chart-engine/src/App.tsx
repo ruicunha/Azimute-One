@@ -10,6 +10,7 @@ import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm9
 import { buildCm93QuiltFeatures, selectCm93ViewportCells, type Cm93ScaleCode } from './cm93-quilt';
 import { buildCm93CoverageQuiltFeatures, cm93PointInCoverage, type Cm93MultiPolygonCoordinates, type Cm93PolygonClippingEngine } from './cm93-quilt-geometry';
 import { benchmarkCm93WebGpuPolygonCandidates, type Cm93WebGpuCandidateBenchmark } from './cm93-webgpu';
+import { cm93QuiltCacheKey, getOrBuildCm93CachedQuilt } from './cm93-quilt-cache';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -254,7 +255,7 @@ export default function App() {
   const [cm93PointClassCounts, setCm93PointClassCounts] = useState<Array<{ name: string; count: number }>>([]);
   const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
   const visibleCm93PointClassesRef = useRef<string[]>([]);
-  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number }; geometryMetrics?: import('./cm93-quilt-geometry').Cm93CoverageQuiltMetrics } | null>(null);
+  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number }; geometryMetrics?: import('./cm93-quilt-geometry').Cm93CoverageQuiltMetrics; quiltCacheHit?: boolean } | null>(null);
   const [cm93ClickDebug, setCm93ClickDebug] = useState<string | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
   const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; classes: string[]; attributes: string[]; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
@@ -961,7 +962,30 @@ export default function App() {
     // chart depend on navigation history.
     cm93RawFeaturesRef.current = features;
     const quiltStartedAt = performance.now();
-    const coverageQuilt = buildCm93CoverageQuiltFeatures(features, selection.scale, cm93ClippingEngine);
+    const selectedCellPaths = new Set(selectedForRendering.map(({ file }) =>
+      (file.webkitRelativePath || file.name).toLowerCase(),
+    ));
+    const cacheFiles = cm93FilesRef.current.filter((file) =>
+      selectedCellPaths.has((file.webkitRelativePath || file.name).toLowerCase()),
+    );
+    const cacheKey = cm93QuiltCacheKey(selection.scale, cm93ClippingEngine, cacheFiles);
+    // Never persist a quilt assembled from a partially failed cell decode;
+    // a later successful decode must be allowed to produce a complete result.
+    const workerResult = failed === 0
+      ? await getOrBuildCm93CachedQuilt<ReturnType<typeof buildCm93CoverageQuiltFeatures>>(
+          cacheKey,
+          features as GeoJSON.Feature[],
+          selection.scale,
+          cm93ClippingEngine,
+        )
+      : null;
+    if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
+    // The worker performs the expensive geometry operation and persists the
+    // processed result in IndexedDB. If workers/storage are unavailable, retain
+    // the original synchronous implementation as a safe fallback.
+    const cacheHit = workerResult?.cacheHit ?? false;
+    const coverageQuilt = workerResult?.value
+      ?? buildCm93CoverageQuiltFeatures(features, selection.scale, cm93ClippingEngine);
     cm93CoverageByScaleRef.current = coverageQuilt.coverageByScale;
     const quiltFeatures = buildCm93QuiltFeatures(coverageQuilt.features);
     const quiltMs = performance.now() - quiltStartedAt;
@@ -1056,6 +1080,7 @@ export default function App() {
       classes: classSummary,
       timings: { selectMs, decodeMs, quiltMs, sourceMs, totalMs },
       geometryMetrics: coverageQuilt.metrics,
+      quiltCacheHit: cacheHit,
     });
     setStatus('ready');
     const underlayCellCount = selection.files.filter((file) => {
@@ -1208,6 +1233,7 @@ export default function App() {
               <li>Viewport cells: {cm93QuiltStats.cells}</li>
               <li>Rendered features: {cm93QuiltStats.features.toLocaleString()}</li>
               <li>Decoded-cell cache: {cm93QuiltStats.cached} cells</li>
+              <li>Persistent quilt cache: {cm93QuiltStats.quiltCacheHit ? 'HIT — reused processed geometry' : 'MISS — processed and stored this cell selection'}</li>
               {cm93QuiltStats.timings && <li>Last update timings: select {cm93QuiltStats.timings.selectMs.toFixed(1)} ms · decode {cm93QuiltStats.timings.decodeMs.toFixed(1)} ms · coverage/geometry {cm93QuiltStats.timings.quiltMs.toFixed(1)} ms · source update {cm93QuiltStats.timings.sourceMs.toFixed(1)} ms · total {cm93QuiltStats.timings.totalMs.toFixed(1)} ms</li>}
               {cm93QuiltStats.geometryMetrics && <li>Quilt stages (ms): coverage collect {cm93QuiltStats.geometryMetrics.collectCoverageMs.toFixed(1)} · coverage allocation/union/difference {cm93QuiltStats.geometryMetrics.coverageAllocationMs.toFixed(1)} · prepare coverage {cm93QuiltStats.geometryMetrics.prepareCoverageMs.toFixed(1)} · feature bounds {cm93QuiltStats.geometryMetrics.featureBoundsMs.toFixed(1)} · point clipping {cm93QuiltStats.geometryMetrics.pointClipMs.toFixed(1)} · line clipping {cm93QuiltStats.geometryMetrics.lineClipMs.toFixed(1)} · polygon clipping {cm93QuiltStats.geometryMetrics.polygonClipMs.toFixed(1)}</li>}
               {cm93QuiltStats.geometryMetrics && <li>Quilt work: {cm93QuiltStats.geometryMetrics.inputFeatureCount.toLocaleString()} input · {cm93QuiltStats.geometryMetrics.coverageFeatureCount} coverage · {cm93QuiltStats.geometryMetrics.boundsRejectedCount.toLocaleString()} bounds rejected · {cm93QuiltStats.geometryMetrics.coverageEdgeCount.toLocaleString()} coverage edges · {cm93QuiltStats.geometryMetrics.polygonCoverageCandidateCount.toLocaleString()} polygon coverage candidates / {cm93QuiltStats.geometryMetrics.polygonCoverageComponentCount.toLocaleString()} components · {cm93QuiltStats.geometryMetrics.outputFeatureCount.toLocaleString()} output features</li>}
@@ -1251,7 +1277,7 @@ export default function App() {
                   scales: cm93Summary.scales.map(({ code, fileCount }) => ({ code, fileCount })),
                 } : null,
                 lastMapClickDiagnostic: clickReport,
-                testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. Include zoom-transition runs where detail appears late.',
+                testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. The persistent browser quilt cache is keyed by scale, clipping engine, and selected cell file metadata. Include zoom-transition runs where detail appears late.',
               };
               void navigator.clipboard?.writeText(JSON.stringify(report, null, 2)).then(() => {
                 setMessage('CM93 performance diagnostics copied. Repeat for cold-cache and warm-cache runs.');
