@@ -136,13 +136,12 @@ function cm93ClassIcon(name: string): string {
   return icons[name] ?? '•';
 }
 
-function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string, visiblePointClasses: string[], scale?: string): void {
-  const suffix = scale ? (scale === 'Z' ? '' : '-' + scale) : '';
-  const scaleFilter = scale ? [['==', ['get', 'cm93Scale'], scale]] : [];
+function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string, visiblePointClasses: string[], scale: string): void {
+  const suffix = scale === 'Z' ? '' : '-' + scale;
   map.addLayer({
     id: prefix + '-lines' + suffix, type: 'line', source, minzoom: 2,
     filter: ['all',
-      ...scaleFilter,
+      ['==', ['get', 'cm93Scale'], scale],
       ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]],
       ['in', ['get', 'cm93Class'], ['literal', cm93KnownLineClasses]],
     ],
@@ -156,7 +155,7 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
   });
   map.addLayer({
     id: prefix + '-icons' + suffix, type: 'symbol', source, minzoom: 3,
-    filter: ['all', ...scaleFilter, ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    filter: ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
     layout: {
       'text-field': ['match', ['get', 'cm93Class'],
         'LIGHTS', '✦',
@@ -198,7 +197,7 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
   });
   map.addLayer({
     id: prefix + '-depth-labels' + suffix, type: 'symbol', source, minzoom: 10,
-    filter: ['all', ...scaleFilter, ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]], ['==', ['get', 'cm93Class'], 'DEPCNT'], ['has', 'VALDCO']],
+    filter: ['all', ['==', ['get', 'cm93Scale'], scale], ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]], ['==', ['get', 'cm93Class'], 'DEPCNT'], ['has', 'VALDCO']],
     layout: {
       'symbol-placement': 'line',
       'text-field': ['concat', ['to-string', ['get', 'VALDCO']], ' m'],
@@ -1024,11 +1023,14 @@ export default function App() {
     const next = visibleCm93PointClassesRef.current.includes(name) ? visibleCm93PointClassesRef.current.filter((item) => item !== name) : [...visibleCm93PointClassesRef.current, name];
     visibleCm93PointClassesRef.current = next; setVisibleCm93PointClasses(next);
     const map = mapRef.current; if (!map) return;
-    for (const layerId of ['cm93-cell-icons', ...cm93Scales.map((scale) => 'cm93-quilt-icons' + (scale === 'Z' ? '' : '-' + scale))]) {
-      if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', next]]]);
-    }
-    for (const layerId of ['cm93-cell-labels', ...cm93Scales.map((scale) => 'cm93-quilt-labels' + (scale === 'Z' ? '' : '-' + scale))]) {
-      if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+    if (map.getLayer('cm93-cell-icons')) map.setFilter('cm93-cell-icons', ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+    if (map.getLayer('cm93-cell-labels')) map.setFilter('cm93-cell-labels', ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+    for (const scale of cm93Scales) {
+      const suffix = scale === 'Z' ? '' : '-' + scale;
+      const iconLayer = 'cm93-quilt-icons' + suffix;
+      const labelLayer = 'cm93-quilt-labels' + suffix;
+      if (map.getLayer(iconLayer)) map.setFilter(iconLayer, ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', next]]]);
+      if (map.getLayer(labelLayer)) map.setFilter(labelLayer, ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', next]]]);
     }
   };
 
