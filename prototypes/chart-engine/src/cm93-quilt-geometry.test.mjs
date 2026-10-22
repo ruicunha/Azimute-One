@@ -112,3 +112,15 @@ test('polygon clipping only intersects coverage components whose bounds overlap 
   assert.equal(cm93PointInCoverage([5, 5], [firstComponent.geometry.coordinates]), true);
   assert.equal(cm93PointInCoverage([25, 5], [firstComponent.geometry.coordinates]), false);
 });
+
+test('supports the experimental Martinez clipping engine for visual comparison', () => {
+  const result = buildCm93CoverageQuiltFeatures([
+    feature('_M_SOR', 'E', { type: 'Polygon', coordinates: [ring(0, 0, 10, 10)] }),
+    feature('DEPARE', 'E', { type: 'Polygon', coordinates: [ring(-1, -1, 11, 11)] }),
+  ], 'E', 'martinez-polygon-clipping');
+
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.features.length, 1);
+  assert.equal(result.features[0].geometry.type, 'Polygon');
+  assert.deepEqual(result.features[0].geometry.coordinates[0], ring(0, 0, 10, 10));
+});
