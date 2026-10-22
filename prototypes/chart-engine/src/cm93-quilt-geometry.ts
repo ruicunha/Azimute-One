@@ -4,7 +4,8 @@ import { CM93_SCALE_ORDER, type Cm93ScaleCode } from './cm93-quilt.ts';
 type Position2D = [number, number];
 type Ring = Position2D[];
 type PolygonCoordinates = Ring[];
-type MultiPolygonCoordinates = PolygonCoordinates[];
+export type Cm93MultiPolygonCoordinates = PolygonCoordinates[];
+type MultiPolygonCoordinates = Cm93MultiPolygonCoordinates;
 
 const clipping = polygonClipping as unknown as {
   union: (...geometries: MultiPolygonCoordinates[]) => MultiPolygonCoordinates;
