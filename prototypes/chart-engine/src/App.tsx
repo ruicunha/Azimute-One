@@ -10,7 +10,7 @@ import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm9
 import { buildCm93QuiltFeatures, selectCm93ViewportCells, type Cm93ScaleCode } from './cm93-quilt';
 import { buildCm93CoverageQuiltFeatures, cm93PointInCoverage, type Cm93MultiPolygonCoordinates, type Cm93PolygonClippingEngine } from './cm93-quilt-geometry';
 import { benchmarkCm93WebGpuPolygonCandidates, type Cm93WebGpuCandidateBenchmark } from './cm93-webgpu';
-import { cm93QuiltCacheKey, getOrBuildCm93CachedQuilt } from './cm93-quilt-cache';
+import { cm93QuiltCacheKey, getOrBuildCm93CachedQuilt, type Cm93CacheTelemetry } from './cm93-quilt-cache';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -256,6 +256,7 @@ export default function App() {
   const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
   const visibleCm93PointClassesRef = useRef<string[]>([]);
   const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number }; geometryMetrics?: import('./cm93-quilt-geometry').Cm93CoverageQuiltMetrics; quiltCacheHit?: boolean } | null>(null);
+  const [cm93CacheTelemetry, setCm93CacheTelemetry] = useState<Cm93CacheTelemetry | null>(null);
   const [cm93ClickDebug, setCm93ClickDebug] = useState<string | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
   const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; classes: string[]; attributes: string[]; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
@@ -984,6 +985,7 @@ export default function App() {
     // processed result in IndexedDB. If workers/storage are unavailable, retain
     // the original synchronous implementation as a safe fallback.
     const cacheHit = workerResult?.cacheHit ?? false;
+    if (workerResult?.telemetry) setCm93CacheTelemetry(workerResult.telemetry);
     const coverageQuilt = workerResult?.value
       ?? buildCm93CoverageQuiltFeatures(features, selection.scale, cm93ClippingEngine);
     cm93CoverageByScaleRef.current = coverageQuilt.coverageByScale;
@@ -1228,6 +1230,17 @@ export default function App() {
             <div className="cm93-glossary"><span className="field-label">QUICK ACRONYM GUIDE</span>{['DEPCNT','DEPARE','DRGARE','COALNE','LIGHTS','BOYLAT','BOYCAR','BOYISD','BCNLAT','BCNCAR','LNDMRK','WRECKS','UWTROC'].map((name) => <p key={name}><strong>{name}</strong> — {cm93ClassDescriptions[name]}</p>)}</div></div>}
           {cm93AutoEnabled && cm93QuiltStats && <div className="legend">
             <span className="field-label">AUTOMATIC CM93 VIEWPORT QUILT</span>
+            {cm93CacheTelemetry && <div className="cache-telemetry">
+              <span className="field-label">PERSISTENT QUILT CACHE STATISTICS</span>
+              <ul>
+                <li>Cache hits / misses: {cm93CacheTelemetry.hits.toLocaleString()} / {cm93CacheTelemetry.misses.toLocaleString()}</li>
+                <li>Hit rate: {cm93CacheTelemetry.hits + cm93CacheTelemetry.misses > 0 ? (cm93CacheTelemetry.hits / (cm93CacheTelemetry.hits + cm93CacheTelemetry.misses) * 100).toFixed(1) + '%' : '—'}</li>
+                <li>Stored payload: {(cm93CacheTelemetry.estimatedBytes / (1024 * 1024)).toFixed(1)} / {(cm93CacheTelemetry.budgetBytes / (1024 * 1024)).toFixed(0)} MiB estimated · {cm93CacheTelemetry.entries.toLocaleString()} entries</li>
+                <li>Successful writes: {cm93CacheTelemetry.writes.toLocaleString()} · LRU evictions: {cm93CacheTelemetry.evictions.toLocaleString()}</li>
+                <li>Read errors: {cm93CacheTelemetry.readErrors.toLocaleString()} · write errors: {cm93CacheTelemetry.writeErrors.toLocaleString()} · oversized quilts skipped: {cm93CacheTelemetry.skippedOversized.toLocaleString()}</li>
+              </ul>
+              <p>Hit/miss/error counters reset when this page's cache worker restarts. Stored size and entry count are read from persistent IndexedDB. A cache hit means processed quilt geometry was reused; cell decoding and MapLibre source updates still run as needed.</p>
+            </div>}
             <ul>
               <li>Target scale / actual cell mix: {cm93QuiltStats.scale}</li>
               <li>Viewport cells: {cm93QuiltStats.cells}</li>
@@ -1251,6 +1264,13 @@ export default function App() {
                 reportType: 'Azimute One CM93 performance diagnostics',
                 polygonClippingEngine: cm93ClippingEngine,
                 capturedAt: new Date().toISOString(),
+                cache: cm93CacheTelemetry ? {
+                  ...cm93CacheTelemetry,
+                  hitRatePercent: cm93CacheTelemetry.hits + cm93CacheTelemetry.misses > 0
+                    ? Number((cm93CacheTelemetry.hits / (cm93CacheTelemetry.hits + cm93CacheTelemetry.misses) * 100).toFixed(1))
+                    : null,
+                  note: 'Hit/miss/error counters are for the current worker session; entry count and estimated bytes reflect persistent IndexedDB contents.'
+                } : null,
                 performance: {
                   timingsMs: cm93QuiltStats.timings ?? null,
                   geometryMetrics: cm93QuiltStats.geometryMetrics ?? null,
