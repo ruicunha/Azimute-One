@@ -256,7 +256,7 @@ export default function App() {
   const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
   const visibleCm93PointClassesRef = useRef<string[]>([]);
   const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number }; geometryMetrics?: import('./cm93-quilt-geometry').Cm93CoverageQuiltMetrics; quiltCacheHit?: boolean } | null>(null);
-  const [cm93CacheTelemetry, setCm93CacheTelemetry] = useState<Cm93CacheTelemetry | null>(null);
+  const [cm93CacheTelemetry, setCm93CacheTelemetry] = useState<Cm93CacheTelemetry | null>(null);\n  const [cm93CacheFallbacks, setCm93CacheFallbacks] = useState(0);
   const [cm93ClickDebug, setCm93ClickDebug] = useState<string | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
   const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; classes: string[]; attributes: string[]; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
@@ -985,6 +985,7 @@ export default function App() {
     // processed result in IndexedDB. If workers/storage are unavailable, retain
     // the original synchronous implementation as a safe fallback.
     const cacheHit = workerResult?.cacheHit ?? false;
+    if (failed === 0 && !workerResult) setCm93CacheFallbacks((count) => count + 1);
     if (workerResult?.telemetry) setCm93CacheTelemetry(workerResult.telemetry);
     const coverageQuilt = workerResult?.value
       ?? buildCm93CoverageQuiltFeatures(features, selection.scale, cm93ClippingEngine);
@@ -1230,17 +1231,18 @@ export default function App() {
             <div className="cm93-glossary"><span className="field-label">QUICK ACRONYM GUIDE</span>{['DEPCNT','DEPARE','DRGARE','COALNE','LIGHTS','BOYLAT','BOYCAR','BOYISD','BCNLAT','BCNCAR','LNDMRK','WRECKS','UWTROC'].map((name) => <p key={name}><strong>{name}</strong> — {cm93ClassDescriptions[name]}</p>)}</div></div>}
           {cm93AutoEnabled && cm93QuiltStats && <div className="legend">
             <span className="field-label">AUTOMATIC CM93 VIEWPORT QUILT</span>
-            {cm93CacheTelemetry && <div className="cache-telemetry">
+            <div className="cache-telemetry">
               <span className="field-label">PERSISTENT QUILT CACHE STATISTICS</span>
-              <ul>
+              {cm93CacheTelemetry ? <ul>
                 <li>Cache hits / misses: {cm93CacheTelemetry.hits.toLocaleString()} / {cm93CacheTelemetry.misses.toLocaleString()}</li>
                 <li>Hit rate: {cm93CacheTelemetry.hits + cm93CacheTelemetry.misses > 0 ? (cm93CacheTelemetry.hits / (cm93CacheTelemetry.hits + cm93CacheTelemetry.misses) * 100).toFixed(1) + '%' : '—'}</li>
                 <li>Stored payload: {(cm93CacheTelemetry.estimatedBytes / (1024 * 1024)).toFixed(1)} / {(cm93CacheTelemetry.budgetBytes / (1024 * 1024)).toFixed(0)} MiB estimated · {cm93CacheTelemetry.entries.toLocaleString()} entries</li>
                 <li>Successful writes: {cm93CacheTelemetry.writes.toLocaleString()} · LRU evictions: {cm93CacheTelemetry.evictions.toLocaleString()}</li>
                 <li>Read errors: {cm93CacheTelemetry.readErrors.toLocaleString()} · write errors: {cm93CacheTelemetry.writeErrors.toLocaleString()} · oversized quilts skipped: {cm93CacheTelemetry.skippedOversized.toLocaleString()}</li>
-              </ul>
+              </ul> : <p>Persistent cache telemetry has not been received from the worker yet. If this remains unavailable, chart geometry is using the synchronous fallback.</p>}
+              <p>Worker/cache fallbacks this page session: {cm93CacheFallbacks.toLocaleString()}</p>
               <p>Hit/miss/error counters reset when this page's cache worker restarts. Stored size and entry count are read from persistent IndexedDB. A cache hit means processed quilt geometry was reused; cell decoding and MapLibre source updates still run as needed.</p>
-            </div>}
+            </div>
             <ul>
               <li>Target scale / actual cell mix: {cm93QuiltStats.scale}</li>
               <li>Viewport cells: {cm93QuiltStats.cells}</li>
