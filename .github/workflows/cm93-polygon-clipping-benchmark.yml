@@ -2,6 +2,15 @@ name: CM93 polygon clipping benchmark
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'benchmark/cm93-polygon-clipping'
+    paths:
+      - '.github/workflows/cm93-polygon-clipping-benchmark.yml'
+      - 'prototypes/chart-engine/scripts/benchmark-cm93-polygon-clipping.mjs'
+      - 'prototypes/chart-engine/scripts/README.md'
+      - 'prototypes/chart-engine/package.json'
+      - 'prototypes/chart-engine/package-lock.json'
 
 permissions:
   contents: read
