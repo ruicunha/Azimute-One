@@ -31,7 +31,7 @@ function getWorker(): Worker | null {
 }
 
 function request(type: 'get', key: string): Promise<unknown | null>;
-function request(type: 'set', key: string, value: unknown): Promise<void>;
+function request(type: 'set', key: string, value: unknown): Promise<unknown>;
 function request(type: 'get' | 'set', key: string, value?: unknown): Promise<unknown> {
   const activeWorker = getWorker();
   if (!activeWorker) return Promise.resolve(type === 'get' ? null : undefined);
