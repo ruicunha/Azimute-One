@@ -29,7 +29,7 @@ test('selects only cells matching the chosen scale and viewport grid when availa
   assert.deepEqual(result.scaleCounts, { D: 1 });
 });
 
-test('falls back to the nearest coarser cell when the target-scale cell is missing', () => {
+test('falls back to the nearest coarser scale when no target-scale cells exist in the viewport', () => {
   const coarse = cell('C', '03781044.C', 'cm93/03301020/C/03781044.C');
   const result = selectCm93ViewportCells([coarse], {
     west: -9.3, south: 38.5, east: -8.9, north: 38.9,
@@ -40,19 +40,27 @@ test('falls back to the nearest coarser cell when the target-scale cell is missi
   assert.deepEqual(result.scaleCounts, { C: 1 });
 });
 
-test('keeps coarse underlay cells beneath available finer cells in the current viewport', () => {
+test('never mixes coarse underlay cells with the requested scale when fine cells exist', () => {
   const fine = cell('D', '03841050.D', 'cm93/03301020/D/03841050.D');
   const coarse = cell('C', '03781044.C', 'cm93/03301020/C/03781044.C');
   const result = selectCm93ViewportCells([fine, coarse], {
     west: -9.4, south: 38.4, east: -8.8, north: 38.9,
   }, 8);
 
-  assert.ok(result.files.includes(fine));
-  assert.ok(result.files.includes(coarse));
-  assert.deepEqual(result.files, [coarse, fine], 'coarse underlay must be ordered before fine cells');
-  assert.equal(result.scale, 'D');
-  assert.equal(result.scaleCounts.D, 1);
-  assert.equal(result.scaleCounts.C, 1);
+  assert.deepEqual(result.files, [fine], 'only the requested scale may be rendered');
+  assert.deepEqual(result.scaleCounts, { D: 1 });
+});
+
+test('falls back as a whole viewport to a coarser scale instead of mixing scales', () => {
+  const coarse = cell('C', '03781044.C', 'cm93/03301020/C/03781044.C');
+  const fineOther = cell('D', '03841050.D', 'cm93/03301020/D/03841050.D');
+  const result = selectCm93ViewportCells([coarse, fineOther], {
+    west: -9.3, south: 38.5, east: -8.9, north: 38.9,
+  }, 8);
+
+  // A D cell exists for the requested viewport, so C must not be drawn beneath it.
+  assert.ok(result.files.every((file) => file.name.endsWith('.D')));
+  assert.deepEqual(result.scaleCounts, { D: 1 });
 });
 
 test('returns an empty selection when no scale has a cell in the viewport', () => {
@@ -69,7 +77,6 @@ test('limits the number of selected cells for large viewports', () => {
   }, 14, 12);
   assert.equal(result.files.length, 0);
 });
-
 
 test('does not truncate a detailed viewport at the old 180-cell limit', () => {
   const files = [];
@@ -90,7 +97,6 @@ test('does not truncate a detailed viewport at the old 180-cell limit', () => {
   assert.equal(result.files.length, 361);
   assert.equal(result.scaleCounts.G, 361);
 });
-
 
 test('builds the quilt only from the current viewport selection', () => {
   const current = {
