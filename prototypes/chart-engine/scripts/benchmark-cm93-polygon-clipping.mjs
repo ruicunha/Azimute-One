@@ -133,7 +133,15 @@ function clipWith(algorithm, subject, coverage) {
   }
 }
 
+function isCoverageFeature(feature) {
+  const name = String(feature.properties?.cm93Class ?? '').toUpperCase();
+  return name === '_M_SOR' || name === 'M_COVR';
+}
+
 const polygonCases = decodedFeatures.flatMap((feature) => {
+  // Match the production quilt: coverage records define the coverage mask;
+  // they are not themselves clipped as chart features.
+  if (isCoverageFeature(feature)) return [];
   if (!feature.geometry || !['Polygon', 'MultiPolygon'].includes(feature.geometry.type)) return [];
   const scale = String(feature.properties?.cm93Scale ?? '').toUpperCase();
   const coverage = coverageByScale[scale];
