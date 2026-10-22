@@ -8,8 +8,9 @@ function cell(filename, path) {
 
 test('uses OpenCPN-style display-scale breaks to choose CM93 detail', () => {
   assert.equal(cm93ScaleForZoom(2, 38.5), 'Z');
-  assert.equal(cm93ScaleForZoom(4, 38.5), 'A');
-  assert.equal(cm93ScaleForZoom(6, 38.5), 'B');
+  assert.equal(cm93ScaleForZoom(4, 38.5), 'Z');
+  assert.equal(cm93ScaleForZoom(6, 38.5), 'A');
+  assert.equal(cm93ScaleForZoom(8, 38.5), 'B');
   assert.equal(cm93ScaleForZoom(8.723, 38.46), 'B');
   assert.equal(cm93ScaleForZoom(9.783, 38.508), 'C');
   assert.equal(cm93ScaleForZoom(10.3, 38.5), 'D');
