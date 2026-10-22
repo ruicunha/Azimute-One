@@ -276,10 +276,34 @@ function isMetadataFeature(feature: GeoJSON.Feature): boolean {
   return String(feature.properties?.cm93Class ?? '').toUpperCase() === 'M_PROD';
 }
 
+export type Cm93CoverageQuiltMetrics = {
+  collectCoverageMs: number;
+  coverageAllocationMs: number;
+  prepareCoverageMs: number;
+  featureBoundsMs: number;
+  pointClipMs: number;
+  lineClipMs: number;
+  polygonClipMs: number;
+  featureLoopMs: number;
+  inputFeatureCount: number;
+  coverageFeatureCount: number;
+  metadataFeatureCount: number;
+  missingGeometryCount: number;
+  invalidScaleCount: number;
+  noCoverageCount: number;
+  boundsRejectedCount: number;
+  pointFeatureCount: number;
+  lineFeatureCount: number;
+  polygonFeatureCount: number;
+  outputFeatureCount: number;
+  coverageEdgeCount: number;
+};
+
 export type Cm93CoverageQuiltResult = {
   features: GeoJSON.Feature[];
   coverageByScale: Partial<Record<Cm93ScaleCode, MultiPolygonCoordinates>>;
   warnings: string[];
+  metrics: Cm93CoverageQuiltMetrics;
 };
 
 /**
@@ -292,18 +316,29 @@ export function buildCm93CoverageQuiltFeatures(
   currentFeatures: GeoJSON.Feature[],
   targetScale: Cm93ScaleCode,
 ): Cm93CoverageQuiltResult {
+  const metrics: Cm93CoverageQuiltMetrics = {
+    collectCoverageMs: 0, coverageAllocationMs: 0, prepareCoverageMs: 0,
+    featureBoundsMs: 0, pointClipMs: 0, lineClipMs: 0, polygonClipMs: 0, featureLoopMs: 0,
+    inputFeatureCount: currentFeatures.length, coverageFeatureCount: 0, metadataFeatureCount: 0,
+    missingGeometryCount: 0, invalidScaleCount: 0, noCoverageCount: 0, boundsRejectedCount: 0,
+    pointFeatureCount: 0, lineFeatureCount: 0, polygonFeatureCount: 0, outputFeatureCount: 0, coverageEdgeCount: 0,
+  };
   const targetIndex = CM93_SCALE_ORDER.indexOf(targetScale);
   const rawRegions = new Map<Cm93ScaleCode, MultiPolygonCoordinates[]>();
   for (const scale of CM93_SCALE_ORDER.slice(0, targetIndex + 1)) rawRegions.set(scale, []);
+  const collectStartedAt = performance.now();
 
   for (const feature of currentFeatures) {
     if (!isCoverageFeature(feature)) continue;
+    metrics.coverageFeatureCount++;
     const scale = String(feature.properties?.cm93Scale ?? '').toUpperCase() as Cm93ScaleCode;
     if (!rawRegions.has(scale) || !feature.geometry) continue;
     const polygon = toMultiPolygon(feature.geometry);
     if (polygon?.length) rawRegions.get(scale)?.push(polygon);
   }
 
+  metrics.collectCoverageMs = performance.now() - collectStartedAt;
+  const allocationStartedAt = performance.now();
   const coverageByScale: Partial<Record<Cm93ScaleCode, MultiPolygonCoordinates>> = {};
   const warnings: string[] = [];
   let allocatedCoverage: MultiPolygonCoordinates = [];
@@ -339,22 +374,56 @@ export function buildCm93CoverageQuiltFeatures(
     }
   }
 
+  metrics.coverageAllocationMs = performance.now() - allocationStartedAt;
+  const prepareStartedAt = performance.now();
   const preparedCoverageByScale: Partial<Record<Cm93ScaleCode, PreparedCoverage>> = {};
   for (const [scale, coverage] of Object.entries(coverageByScale) as Array<[Cm93ScaleCode, MultiPolygonCoordinates]>) {
     const prepared = prepareCoverage(coverage);
-    if (prepared) preparedCoverageByScale[scale] = prepared;
+    if (prepared) {
+      preparedCoverageByScale[scale] = prepared;
+      metrics.coverageEdgeCount += prepared.edges.length;
+    }
   }
+  metrics.prepareCoverageMs = performance.now() - prepareStartedAt;
 
   const features: GeoJSON.Feature[] = [];
+  const featureLoopStartedAt = performance.now();
   for (const feature of currentFeatures) {
-    if (isCoverageFeature(feature) || isMetadataFeature(feature) || !feature.geometry) continue;
+    if (isCoverageFeature(feature)) continue;
+    if (isMetadataFeature(feature)) { metrics.metadataFeatureCount++; continue; }
+    if (!feature.geometry) { metrics.missingGeometryCount++; continue; }
     const scale = String(feature.properties?.cm93Scale ?? '').toUpperCase() as Cm93ScaleCode;
     const scaleIndex = CM93_SCALE_ORDER.indexOf(scale);
-    if (scaleIndex < 0 || scaleIndex > targetIndex) continue;
+    if (scaleIndex < 0 || scaleIndex > targetIndex) { metrics.invalidScaleCount++; continue; }
     const prepared = preparedCoverageByScale[scale];
-    if (!prepared) continue;
-    features.push(...clipFeatureToCoverage(feature, prepared));
-  }
+    if (!prepared) { metrics.noCoverageCount++; continue; }
 
-  return { features, coverageByScale, warnings };
+    const boundsStartedAt = performance.now();
+    const bounds = geometryBounds(feature.geometry);
+    metrics.featureBoundsMs += performance.now() - boundsStartedAt;
+    if (!bounds || !boundsOverlap(bounds, prepared.bounds)) {
+      metrics.boundsRejectedCount++;
+      continue;
+    }
+
+    const geometryType = feature.geometry.type;
+    const clipStartedAt = performance.now();
+    const clipped = clipFeatureToCoverage(feature, prepared);
+    const clipMs = performance.now() - clipStartedAt;
+    if (geometryType === 'Point' || geometryType === 'MultiPoint') {
+      metrics.pointFeatureCount++;
+      metrics.pointClipMs += clipMs;
+    } else if (geometryType === 'LineString' || geometryType === 'MultiLineString') {
+      metrics.lineFeatureCount++;
+      metrics.lineClipMs += clipMs;
+    } else if (geometryType === 'Polygon' || geometryType === 'MultiPolygon') {
+      metrics.polygonFeatureCount++;
+      metrics.polygonClipMs += clipMs;
+    }
+    metrics.outputFeatureCount += clipped.length;
+    features.push(...clipped);
+  }
+  metrics.featureLoopMs = performance.now() - featureLoopStartedAt;
+
+  return { features, coverageByScale, warnings, metrics };
 }
