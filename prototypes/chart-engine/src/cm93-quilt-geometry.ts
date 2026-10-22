@@ -13,11 +13,16 @@ const clipping = polygonClipping as unknown as {
 };
 
 function pointOnSegment(point: Position2D, start: Position2D, end: Position2D): boolean {
-  const cross = (point[0] - start[0]) * (end[1] - start[1]) - (point[1] - start[1]) * (end[0] - start[0]);
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared < 1e-20) {
+    return (point[0] - start[0]) ** 2 + (point[1] - start[1]) ** 2 < 1e-20;
+  }
+  const cross = (point[0] - start[0]) * dy - (point[1] - start[1]) * dx;
   if (Math.abs(cross) > 1e-10) return false;
-  const dot = (point[0] - start[0]) * (end[0] - start[0]) + (point[1] - start[1]) * (end[1] - start[1]);
+  const dot = (point[0] - start[0]) * dx + (point[1] - start[1]) * dy;
   if (dot < -1e-10) return false;
-  const lengthSquared = (end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2;
   return dot <= lengthSquared + 1e-10;
 }
 
