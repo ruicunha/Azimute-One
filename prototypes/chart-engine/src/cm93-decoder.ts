@@ -820,9 +820,15 @@ function pointInRing(point: [number, number], ring: GeoJSON.Position[]): boolean
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const a = ring[i];
     const b = ring[j];
-    const cross = (point[0] - a[0]) * (b[1] - a[1]) - (point[1] - a[1]) * (b[0] - a[0]);
-    const dot = (point[0] - a[0]) * (b[0] - a[0]) + (point[1] - a[1]) * (b[1] - a[1]);
-    const lengthSquared = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2;
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared < 1e-20) {
+      if ((point[0] - a[0]) ** 2 + (point[1] - a[1]) ** 2 < 1e-20) return true;
+      continue;
+    }
+    const cross = (point[0] - a[0]) * dy - (point[1] - a[1]) * dx;
+    const dot = (point[0] - a[0]) * dx + (point[1] - a[1]) * dy;
     if (Math.abs(cross) < 1e-10 && dot >= -1e-10 && dot <= lengthSquared + 1e-10) return true;
     if ((a[1] > point[1]) !== (b[1] > point[1]) &&
         point[0] < ((b[0] - a[0]) * (point[1] - a[1]) / (b[1] - a[1]) + a[0])) {
