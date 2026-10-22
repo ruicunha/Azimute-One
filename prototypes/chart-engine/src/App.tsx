@@ -136,12 +136,15 @@ function cm93ClassIcon(name: string): string {
   return icons[name] ?? '•';
 }
 
-function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string, visiblePointClasses: string[], scale: string): void {
-  const suffix = scale === 'Z' ? '' : '-' + scale;
+function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string, visiblePointClasses: string[], scale?: string): void {
+  const suffix = scale ? (scale === 'Z' ? '' : '-' + scale) : '';
   map.addLayer({
     id: prefix + '-lines' + suffix, type: 'line', source, minzoom: 2,
-    filter: ['all',
+    filter: scale ? ['all',
       ['==', ['get', 'cm93Scale'], scale],
+      ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]],
+      ['in', ['get', 'cm93Class'], ['literal', cm93KnownLineClasses]],
+    ] : ['all',
       ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]],
       ['in', ['get', 'cm93Class'], ['literal', cm93KnownLineClasses]],
     ],
@@ -155,7 +158,7 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
   });
   map.addLayer({
     id: prefix + '-icons' + suffix, type: 'symbol', source, minzoom: 3,
-    filter: ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    filter: scale ? ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]] : ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
     layout: {
       'text-field': ['match', ['get', 'cm93Class'],
         'LIGHTS', '✦',
@@ -179,7 +182,7 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
   });
   map.addLayer({
     id: prefix + '-labels' + suffix, type: 'symbol', source, minzoom: 12,
-    filter: ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    filter: scale ? ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]] : ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
     layout: {
       'text-field': ['coalesce', ['get', 'cm93DetailLabel'], ['case',
         ['==', ['get', 'cm93Class'], 'LIGHTS'],
@@ -197,7 +200,7 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
   });
   map.addLayer({
     id: prefix + '-depth-labels' + suffix, type: 'symbol', source, minzoom: 10,
-    filter: ['all', ['==', ['get', 'cm93Scale'], scale], ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]], ['==', ['get', 'cm93Class'], 'DEPCNT'], ['has', 'VALDCO']],
+    filter: scale ? ['all', ['==', ['get', 'cm93Scale'], scale], ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]], ['==', ['get', 'cm93Class'], 'DEPCNT'], ['has', 'VALDCO']] : ['all', ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]], ['==', ['get', 'cm93Class'], 'DEPCNT'], ['has', 'VALDCO']],
     layout: {
       'symbol-placement': 'line',
       'text-field': ['concat', ['to-string', ['get', 'VALDCO']], ' m'],
