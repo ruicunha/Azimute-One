@@ -887,7 +887,7 @@ function shiftGeometryByProjectedOffset(
   }
 }
 
-function applyCm93CoverageOffsets(features: GeoJSON.Feature[]): void {
+export function applyCm93CoverageOffsets(features: GeoJSON.Feature[]): void {
   const coverageFeatures = features.filter((feature) =>
     String(feature.properties?.cm93Class ?? '').toUpperCase() === '_M_SOR' &&
     feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon'),
