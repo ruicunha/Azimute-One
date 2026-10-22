@@ -256,7 +256,8 @@ export default function App() {
   const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
   const visibleCm93PointClassesRef = useRef<string[]>([]);
   const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number }; geometryMetrics?: import('./cm93-quilt-geometry').Cm93CoverageQuiltMetrics; quiltCacheHit?: boolean } | null>(null);
-  const [cm93CacheTelemetry, setCm93CacheTelemetry] = useState<Cm93CacheTelemetry | null>(null);\n  const [cm93CacheFallbacks, setCm93CacheFallbacks] = useState(0);
+  const [cm93CacheTelemetry, setCm93CacheTelemetry] = useState<Cm93CacheTelemetry | null>(null);
+  const [cm93CacheFallbacks, setCm93CacheFallbacks] = useState(0);
   const [cm93ClickDebug, setCm93ClickDebug] = useState<string | null>(null);
   const [cm93DictionaryStats, setCm93DictionaryStats] = useState<{ objects: number; attributes: number } | null>(null);
   const [cm93CellStats, setCm93CellStats] = useState<{ checked: number; valid: number; features: number; vectors: number; vectorPoints: number; classes: string[]; attributes: string[]; failures: string[]; example?: { name: string; headerLength: number; table1Length: number; table2Length: number; bounds: string; vectorRecordCount: number; vectorPointCount: number; point2dCount: number; featureCount: number } } | null>(null);
