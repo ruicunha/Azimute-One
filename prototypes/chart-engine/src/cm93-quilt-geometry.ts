@@ -225,11 +225,11 @@ function clipLineToCoverage(line: Position2D[], prepared: PreparedCoverage): Pos
   return result;
 }
 
-function clipFeatureToCoverage(feature: GeoJSON.Feature, prepared: PreparedCoverage): GeoJSON.Feature[] {
+function clipFeatureToCoverage(feature: GeoJSON.Feature, prepared: PreparedCoverage, precomputedBounds?: Bounds | null): GeoJSON.Feature[] {
   const coverage = prepared.geometry;
   const geometry = feature.geometry;
   if (!geometry) return [];
-  const bounds = geometryBounds(geometry);
+  const bounds = precomputedBounds === undefined ? geometryBounds(geometry) : precomputedBounds;
   if (!bounds || !boundsOverlap(bounds, prepared.bounds)) return [];
   if (geometry.type === 'Point') {
     return cm93PointInCoverage(pointFromPosition(geometry.coordinates), coverage) ? [feature] : [];
@@ -408,7 +408,7 @@ export function buildCm93CoverageQuiltFeatures(
 
     const geometryType = feature.geometry.type;
     const clipStartedAt = performance.now();
-    const clipped = clipFeatureToCoverage(feature, prepared);
+    const clipped = clipFeatureToCoverage(feature, prepared, bounds);
     const clipMs = performance.now() - clipStartedAt;
     if (geometryType === 'Point' || geometryType === 'MultiPoint') {
       metrics.pointFeatureCount++;
