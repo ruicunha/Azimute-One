@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildCm93QuiltFeatures, cm93ScaleForZoom, selectCm93ViewportCells } from './cm93-quilt.ts';
 
-function cell(scale, filename, path) {
+function cell(filename, path) {
   return { name: filename, webkitRelativePath: path, arrayBuffer: async () => new ArrayBuffer(0) };
 }
 
@@ -18,19 +18,19 @@ test('selects progressively finer provisional CM93 scales as zoom increases', ()
 });
 
 test('selects only cells matching the chosen scale and viewport grid when available', () => {
-  const target = cell('D', '03841050.D', 'cm93/03301020/D/03841050.D');
-  const otherScale = cell('E', '03841050.E', 'cm93/03301020/E/03841050.E');
+  const target = cell('03841050.D', 'cm93/03301020/D/03841050.D');
+  const otherScale = cell('03841050.E', 'cm93/03301020/E/03841050.E');
   const result = selectCm93ViewportCells([target, otherScale], {
     west: -9.3, south: 38.5, east: -8.9, north: 38.9,
   }, 8);
 
   assert.equal(result.scale, 'D');
-  assert.deepEqual(result.files, [target]);
-  assert.deepEqual(result.scaleCounts, { D: 1 });
+  assert.ok(result.files.every((file) => file.name.endsWith('.D')));
+  assert.deepEqual(result.scaleCounts, { D: result.files.length });
 });
 
 test('falls back to the nearest coarser scale when no target-scale cells exist in the viewport', () => {
-  const coarse = cell('C', '03781044.C', 'cm93/03301020/C/03781044.C');
+  const coarse = cell('03781044.C', 'cm93/03301020/C/03781044.C');
   const result = selectCm93ViewportCells([coarse], {
     west: -9.3, south: 38.5, east: -8.9, north: 38.9,
   }, 8);
@@ -40,9 +40,9 @@ test('falls back to the nearest coarser scale when no target-scale cells exist i
   assert.deepEqual(result.scaleCounts, { C: 1 });
 });
 
-test('never mixes coarse underlay cells with the requested scale when fine cells exist', () => {
-  const fine = cell('D', '03841050.D', 'cm93/03301020/D/03841050.D');
-  const coarse = cell('C', '03781044.C', 'cm93/03301020/C/03781044.C');
+test('does not mix coarse underlay cells with the requested scale when fine cells exist', () => {
+  const fine = cell('03841050.D', 'cm93/03301020/D/03841050.D');
+  const coarse = cell('03781044.C', 'cm93/03301020/C/03781044.C');
   const result = selectCm93ViewportCells([fine, coarse], {
     west: -9.4, south: 38.4, east: -8.8, north: 38.9,
   }, 8);
@@ -51,16 +51,27 @@ test('never mixes coarse underlay cells with the requested scale when fine cells
   assert.deepEqual(result.scaleCounts, { D: 1 });
 });
 
-test('falls back as a whole viewport to a coarser scale instead of mixing scales', () => {
-  const coarse = cell('C', '03781044.C', 'cm93/03301020/C/03781044.C');
-  const fineOther = cell('D', '03841050.D', 'cm93/03301020/D/03841050.D');
-  const result = selectCm93ViewportCells([coarse, fineOther], {
-    west: -9.3, south: 38.5, east: -8.9, north: 38.9,
-  }, 8);
+test('fills a missing E tile from the matching F tile without dropping adjacent E tiles', () => {
+  const fineFallback = cell('03851051.F', 'cm93/03301020/F/03851051.F');
+  const adjacentE = cell('03851052.E', 'cm93/03301020/E/03851052.E');
+  const result = selectCm93ViewportCells([fineFallback, adjacentE], {
+    west: -9.4, south: 38.5, east: -9.2, north: 38.7,
+  }, 10);
 
-  // A D cell exists for the requested viewport, so C must not be drawn beneath it.
-  assert.ok(result.files.every((file) => file.name.endsWith('.D')));
-  assert.deepEqual(result.scaleCounts, { D: 1 });
+  assert.ok(result.files.some((file) => file.name === '03851051.F'));
+  assert.ok(result.files.some((file) => file.name === '03851052.E'));
+  assert.deepEqual(result.scaleCounts, { F: 1, E: 1 });
+});
+
+test('prefers the requested E tile over a finer F tile in the same footprint', () => {
+  const requested = cell('03851051.E', 'cm93/03301020/E/03851051.E');
+  const finer = cell('03851051.F', 'cm93/03301020/F/03851051.F');
+  const result = selectCm93ViewportCells([requested, finer], {
+    west: -9.4, south: 38.5, east: -9.3, north: 38.6,
+  }, 10);
+
+  assert.ok(result.files.some((file) => file.name === '03851051.E'));
+  assert.ok(!result.files.some((file) => file.name === '03851051.F'));
 });
 
 test('returns an empty selection when no scale has a cell in the viewport', () => {
@@ -87,7 +98,7 @@ test('does not truncate a detailed viewport at the old 180-cell limit', () => {
       const rootLongitude = Math.floor(longitudeCell / 60) * 60;
       const root = String(rootLatitude).padStart(4, '0') + String(rootLongitude).padStart(4, '0');
       const filename = String(cellLatitude).padStart(4, '0') + String(longitudeCell).padStart(4, '0') + '.g';
-      files.push(cell('G', filename, `cm93/${root}/g/${filename}`));
+      files.push(cell(filename, `cm93/${root}/g/${filename}`));
     }
   }
   const result = selectCm93ViewportCells(files, {
