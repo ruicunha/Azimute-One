@@ -9,6 +9,7 @@ import { inspectCm93Files, type Cm93DatasetSummary } from './cm93-dataset';
 import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm93Dictionaries, type Cm93Dictionary } from './cm93-decoder';
 import { buildCm93QuiltFeatures, selectCm93ViewportCells, type Cm93ScaleCode } from './cm93-quilt';
 import { buildCm93CoverageQuiltFeatures, cm93PointInCoverage, type Cm93MultiPolygonCoordinates, type Cm93PolygonClippingEngine } from './cm93-quilt-geometry';
+import { benchmarkCm93WebGpuPolygonCandidates, type Cm93WebGpuCandidateBenchmark } from './cm93-webgpu';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -226,6 +227,7 @@ export default function App() {
   const cm93DictionaryRef = useRef<Cm93Dictionary | null>(null);
   const cm93DecodedCacheRef = useRef(new Map<string, ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>());
   const cm93RenderedFeaturesRef = useRef<ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>([]);
+  const cm93RawFeaturesRef = useRef<ReturnType<typeof cm93CellToGeoJSON>['geojson']['features']>([]);
   const cm93CoverageByScaleRef = useRef<Partial<Record<Cm93ScaleCode, Cm93MultiPolygonCoordinates>>>({});
   const cm93QuiltRequestRef = useRef(0);
   const cm93AutoEnabledRef = useRef(false);
@@ -245,6 +247,8 @@ export default function App() {
   const [cm93Summary, setCm93Summary] = useState<Cm93DatasetSummary | null>(null);
   const [cm93AutoEnabled, setCm93AutoEnabled] = useState(false);
   const [cm93ClippingEngine, setCm93ClippingEngine] = useState<Cm93PolygonClippingEngine>('polygon-clipping');
+  const [cm93WebGpuBenchmark, setCm93WebGpuBenchmark] = useState<Cm93WebGpuCandidateBenchmark | null>(null);
+  const [cm93WebGpuBenchmarkRunning, setCm93WebGpuBenchmarkRunning] = useState(false);
   const [cm93PointClassCounts, setCm93PointClassCounts] = useState<Array<{ name: string; count: number }>>([]);
   const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
   const visibleCm93PointClassesRef = useRef<string[]>([]);
@@ -828,6 +832,31 @@ export default function App() {
   };
 
 
+  const runCm93WebGpuBenchmark = async () => {
+    const scale = cm93QuiltStats?.scale as Cm93ScaleCode | undefined;
+    const coverage = scale ? cm93CoverageByScaleRef.current[scale] : undefined;
+    if (!coverage || !cm93RawFeaturesRef.current.length) {
+      setMessage('Enable automatic CM93 detail and wait for a viewport quilt before running the WebGPU experiment.');
+      return;
+    }
+    setCm93WebGpuBenchmarkRunning(true);
+    setCm93WebGpuBenchmark(null);
+    try {
+      const result = await benchmarkCm93WebGpuPolygonCandidates(
+        cm93RawFeaturesRef.current as GeoJSON.Feature[],
+        coverage,
+      );
+      setCm93WebGpuBenchmark(result);
+      setMessage(result.equivalent
+        ? 'WebGPU polygon candidate benchmark completed. GPU and CPU candidate sets match.'
+        : 'WebGPU benchmark detected a candidate mismatch. Do not use the experimental result for chart rendering.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'WebGPU polygon candidate benchmark failed.');
+    } finally {
+      setCm93WebGpuBenchmarkRunning(false);
+    }
+  };
+
   const syncCm93Quilt = useCallback(async () => {
     const map = mapRef.current;
     const dictionary = cm93DictionaryRef.current;
@@ -919,6 +948,7 @@ export default function App() {
     // Do not reuse a prior zoom's features when selected cells fail to decode
     // or contain no usable geometry. That creates stale overlays and makes the
     // chart depend on navigation history.
+    cm93RawFeaturesRef.current = features;
     const quiltStartedAt = performance.now();
     const coverageQuilt = buildCm93CoverageQuiltFeatures(features, selection.scale, cm93ClippingEngine);
     cm93CoverageByScaleRef.current = coverageQuilt.coverageByScale;
@@ -1122,6 +1152,20 @@ export default function App() {
               <button className={cm93ClippingEngine === 'martinez-polygon-clipping' ? 'secondary-button clipping-engine-option selected' : 'secondary-button clipping-engine-option'} type="button" aria-pressed={cm93ClippingEngine === 'martinez-polygon-clipping'} onClick={() => setCm93ClippingEngine('martinez-polygon-clipping')}>Alternative: Martinez</button>
             </div>
             <p>Active engine: <strong>{cm93ClippingEngine}</strong>. Martinez is experimental; compare coastline, depth areas and scale transitions carefully.</p>
+          </div>}
+          {cm93Summary?.isLikelyCm93V2 && <div className="legend">
+            <span className="field-label">EXPERIMENTAL WEBGPU POLYGON CLIPPING</span>
+            <p>Benchmark GPU-parallel polygon-feature/coverage-component bounding-box candidate filtering against the CPU. This is a safe first WebGPU stage: exact polygon Boolean clipping and all chart rendering remain unchanged on the CPU/current engine.</p>
+            <button className="secondary-button" type="button" disabled={cm93WebGpuBenchmarkRunning || !cm93AutoEnabled || !cm93QuiltStats} onClick={() => void runCm93WebGpuBenchmark()}>
+              {cm93WebGpuBenchmarkRunning ? 'Running WebGPU benchmark…' : 'Run WebGPU polygon benchmark'}
+            </button>
+            {cm93WebGpuBenchmark && <ul>
+              <li>GPU adapter: {cm93WebGpuBenchmark.adapter}</li>
+              <li>Workload: {cm93WebGpuBenchmark.polygonFeatureCount.toLocaleString()} polygon features × {cm93WebGpuBenchmark.coverageComponentCount.toLocaleString()} coverage components = {cm93WebGpuBenchmark.pairCount.toLocaleString()} candidate pairs</li>
+              <li>Candidate pairs retained: {cm93WebGpuBenchmark.candidatePairCount.toLocaleString()} · CPU/GPU identical: {cm93WebGpuBenchmark.equivalent ? 'yes' : 'NO — investigate before use'}</li>
+              <li>CPU median: {cm93WebGpuBenchmark.cpuMedianMs.toFixed(2)} ms · GPU setup: {cm93WebGpuBenchmark.gpuSetupMs.toFixed(2)} ms · GPU dispatch/readback median: {cm93WebGpuBenchmark.gpuMedianDispatchReadbackMs.toFixed(2)} ms · GPU total: {cm93WebGpuBenchmark.gpuTotalMedianMs.toFixed(2)} ms</li>
+            </ul>}
+            {cm93WebGpuBenchmark && <p>{cm93WebGpuBenchmark.note}</p>}
           </div>}
           {cm93Summary?.isLikelyCm93V2 && <div className="legend">
             <span className="field-label">CM93 CLICK DIAGNOSTICS</span>
