@@ -919,10 +919,10 @@ export default function App() {
     } else {
       clearCm93Quilt(map);
       map.addSource('cm93-quilt', { type: 'geojson', data, tolerance: 0.5, maxzoom: 14, buffer: 0 });
-      // Paint coarser-scale areas first and progressively finer-scale fills
-      // above them. The fine chart only obscures the underlay where it has
-      // actual polygon geometry; gaps therefore reveal current-viewport coarse
-      // data instead of going blank or reusing stale features from an old view.
+      // Features have already been clipped to non-overlapping M_COVR regions:
+      // detailed scales own their coverage, and coarser scales only fill the
+      // remaining geographic gaps. Layer order follows the same coarse-to-fine
+      // progression used by OpenCPN's CM93 quilt.
       for (const scale of cm93Scales) {
         const suffix = scale === 'Z' ? '' : '-' + scale;
         map.addLayer({
@@ -954,7 +954,7 @@ export default function App() {
     cm93RenderedFeaturesRef.current = quiltFeatures;
 
     // The quilt source now contains current-viewport cells from the requested
-    // scale and every available coarser scale, painted coarse-to-fine. Remove
+    // scale and coarser candidates, with geometry allocated by M_COVR. Remove
     // the whole-dataset overview only after this replacement is ready.
     for (const layerId of ['cm93-cell-labels', 'cm93-cell-depth-labels', 'cm93-cell-icons', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
       if (map.getLayer(layerId)) map.removeLayer(layerId);
