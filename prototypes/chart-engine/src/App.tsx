@@ -962,7 +962,13 @@ export default function App() {
     // chart depend on navigation history.
     cm93RawFeaturesRef.current = features;
     const quiltStartedAt = performance.now();
-    const cacheKey = cm93QuiltCacheKey(selection.scale, cm93ClippingEngine, selectedForRendering.map(({ file }) => file));
+    const selectedCellPaths = new Set(selectedForRendering.map(({ file }) =>
+      (file.webkitRelativePath || file.name).toLowerCase(),
+    ));
+    const cacheFiles = cm93FilesRef.current.filter((file) =>
+      selectedCellPaths.has((file.webkitRelativePath || file.name).toLowerCase()),
+    );
+    const cacheKey = cm93QuiltCacheKey(selection.scale, cm93ClippingEngine, cacheFiles);
     // Never persist a quilt assembled from a partially failed cell decode;
     // a later successful decode must be allowed to produce a complete result.
     const workerResult = failed === 0
