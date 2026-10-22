@@ -179,7 +179,7 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
   });
   map.addLayer({
     id: prefix + '-labels' + suffix, type: 'symbol', source, minzoom: 12,
-    filter: ['all', ...scaleFilter, ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    filter: ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
     layout: {
       'text-field': ['coalesce', ['get', 'cm93DetailLabel'], ['case',
         ['==', ['get', 'cm93Class'], 'LIGHTS'],
