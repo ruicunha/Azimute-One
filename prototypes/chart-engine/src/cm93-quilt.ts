@@ -65,7 +65,7 @@ export type Cm93ViewportSelection = {
   scale: Cm93ScaleCode;
   /** Primary cells selected at the requested scale, or coarser fallback scale. */
   files: Cm93CellFile[];
-  /** Finer E/F/G cells used only for area fills, never points or lines. */
+  /** Coarser and finer fallback cells used only for area fills, never points or lines. */
   fillFallbackFiles: Cm93CellFile[];
   scaleCounts: Partial<Record<Cm93ScaleCode, number>>;
 };
@@ -132,10 +132,41 @@ export function selectCm93ViewportCells(
         scaleCounts[actualScale] = (scaleCounts[actualScale] ?? 0) + 1;
       }
 
-      // Fine-grid cells may contain valid depth/land polygons in places where
-      // a selected coarse cell has no geometry. Keep these as fill-only
-      // supplements so their points and lines cannot create multi-scale clutter.
+      // A detailed CM93 cell can exist without an area polygon at a given
+      // position. Keep available coarser cells as fill-only underlays so the
+      // detailed chart is not allowed to turn missing coverage into blank water.
+      // App paints fills coarse-to-fine, and these cells never contribute points
+      // or lines, so the underlay is visible only where finer polygons are absent.
       const fillFallbackFiles = new Map<string, Cm93CellFile>();
+      const coarseSouth = Math.max(-79.5, Math.min(bounds.south, bounds.north));
+      const coarseNorth = Math.min(80, Math.max(bounds.south, bounds.north));
+      const coarseWest = Math.min(bounds.west, bounds.east);
+      const coarseEast = Math.max(bounds.west, bounds.east);
+      const coarseLongitudeSpan = Math.min(360, Math.max(0, coarseEast - coarseWest));
+      for (let coarseIndex = targetIndex - 1; coarseIndex >= 0; coarseIndex--) {
+        const coarseScale = CM93_SCALE_ORDER[coarseIndex];
+        const coarseStep = CM93_SCALE_STEPS[coarseScale];
+        const firstCoarseLatitudeCell = Math.floor((coarseSouth * 3 + 240) / coarseStep) * coarseStep;
+        const lastCoarseLatitudeCell = Math.floor((coarseNorth * 3 + 240) / coarseStep) * coarseStep;
+        const firstCoarseLongitudeCell = Math.floor((normalizedLongitude(coarseWest) * 3) / coarseStep) * coarseStep;
+        const lastCoarseLongitudeCell = Math.floor((normalizedLongitude(coarseWest) * 3 + coarseLongitudeSpan * 3) / coarseStep) * coarseStep;
+
+        for (let latitudeCell = firstCoarseLatitudeCell; latitudeCell <= lastCoarseLatitudeCell; latitudeCell += coarseStep) {
+          for (let longitudeCellUnwrapped = firstCoarseLongitudeCell; longitudeCellUnwrapped <= lastCoarseLongitudeCell; longitudeCellUnwrapped += coarseStep) {
+            const longitudeCell = ((longitudeCellUnwrapped % 1080) + 1080) % 1080;
+            const found = byPath.get(pathForCell(latitudeCell, longitudeCell, coarseScale));
+            if (!found) continue;
+            const key = (found.webkitRelativePath || found.name).toLowerCase();
+            if (!selected.has(key)) fillFallbackFiles.set(key, found);
+            if (selected.size + fillFallbackFiles.size >= maxCells) break;
+          }
+          if (selected.size + fillFallbackFiles.size >= maxCells) break;
+        }
+        if (selected.size + fillFallbackFiles.size >= maxCells) break;
+      }
+
+      // Finer-grid cells may also contain useful area polygons where the
+      // requested-scale cell is missing. Keep those as fill-only supplements too.
       if (targetIndex >= CM93_SCALE_ORDER.indexOf('D') && targetScale !== 'G') {
         const fineScales = CM93_SCALE_ORDER.slice(Math.max(targetIndex + 1, CM93_SCALE_ORDER.indexOf('E'))).reverse();
         const fineSouth = Math.max(-79.5, Math.min(bounds.south, bounds.north));
