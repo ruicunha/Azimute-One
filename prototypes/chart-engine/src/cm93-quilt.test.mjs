@@ -6,15 +6,16 @@ function cell(filename, path) {
   return { name: filename, webkitRelativePath: path, arrayBuffer: async () => new ArrayBuffer(0) };
 }
 
-test('selects progressively finer provisional CM93 scales as zoom increases', () => {
-  assert.equal(cm93ScaleForZoom(2), 'Z');
-  assert.equal(cm93ScaleForZoom(4), 'A');
-  assert.equal(cm93ScaleForZoom(5), 'B');
-  assert.equal(cm93ScaleForZoom(6), 'C');
-  assert.equal(cm93ScaleForZoom(8), 'D');
-  assert.equal(cm93ScaleForZoom(10), 'E');
-  assert.equal(cm93ScaleForZoom(12), 'F');
-  assert.equal(cm93ScaleForZoom(14), 'G');
+test('uses OpenCPN-style display-scale breaks to choose CM93 detail', () => {
+  assert.equal(cm93ScaleForZoom(2, 38.5), 'Z');
+  assert.equal(cm93ScaleForZoom(4, 38.5), 'A');
+  assert.equal(cm93ScaleForZoom(6, 38.5), 'B');
+  assert.equal(cm93ScaleForZoom(8.723, 38.46), 'B');
+  assert.equal(cm93ScaleForZoom(9.783, 38.508), 'C');
+  assert.equal(cm93ScaleForZoom(10.3, 38.5), 'D');
+  assert.equal(cm93ScaleForZoom(12.5, 38.5), 'E');
+  assert.equal(cm93ScaleForZoom(14, 38.5), 'F');
+  assert.equal(cm93ScaleForZoom(16, 38.5), 'G');
 });
 
 test('selects only cells matching the chosen scale and viewport grid when available', () => {
@@ -22,7 +23,7 @@ test('selects only cells matching the chosen scale and viewport grid when availa
   const otherScale = cell('03841050.E', 'cm93/03301020/E/03841050.E');
   const result = selectCm93ViewportCells([target, otherScale], {
     west: -9.3, south: 38.5, east: -8.9, north: 38.9,
-  }, 8);
+  }, 10.3);
 
   assert.equal(result.scale, 'D');
   assert.ok(result.files.every((file) => file.name.endsWith('.D')));
@@ -57,7 +58,7 @@ test('does not substitute finer F cells for missing E-scale coverage', () => {
   const adjacentE = cell('03851052.E', 'cm93/03301020/E/03851052.E');
   const result = selectCm93ViewportCells([fineFallback, adjacentE], {
     west: -9.4, south: 38.5, east: -9.2, north: 38.7,
-  }, 10);
+  }, 12.5);
 
   assert.ok(!result.files.some((file) => file.name === '03851051.F'));
   assert.ok(result.files.some((file) => file.name === '03851052.E'));
@@ -86,7 +87,7 @@ test('returns an empty selection when no scale has a cell in the viewport', () =
 test('limits the number of selected cells for large viewports', () => {
   const result = selectCm93ViewportCells([], {
     west: -180, south: -70, east: 180, north: 70,
-  }, 14, 12);
+  }, 16, 12);
   assert.equal(result.files.length, 0);
 });
 
@@ -104,7 +105,7 @@ test('does not truncate a detailed viewport at the old 180-cell limit', () => {
   }
   const result = selectCm93ViewportCells(files, {
     west: 0, south: 0, east: 6, north: 6,
-  }, 14, 1200);
+  }, 16, 1200);
 
   assert.equal(result.files.length, 361);
   assert.equal(result.scaleCounts.G, 361);
