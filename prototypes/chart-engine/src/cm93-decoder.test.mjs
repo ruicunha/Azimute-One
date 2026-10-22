@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, assembleCm93VectorPaths, cm93CellToGeoJSON, cm93RingsToPolygonCoordinates, cm93RelatedObjectPriority, cm93GridPointToWgs84, cm93ShiftWgs84PositionByProjectedOffset, parseCm93Dictionaries } from './cm93-decoder.ts';
+import { Cm93BinaryReader, Cm93DecodeError, cm93OffsetsToWgs84, decodeCm93CellHeader, decodeCm93FeatureAttributes, assembleCm93VectorPaths, cm93CellToGeoJSON, cm93RingsToPolygonCoordinates, cm93RelatedObjectPriority, cm93GridPointToWgs84, cm93ShiftWgs84PositionByProjectedOffset, applyCm93CoverageOffsets, parseCm93Dictionaries } from './cm93-decoder.ts';
 
 const firstCellHeader = Uint8Array.from([
   0x48, 0xc5, 0x49, 0x73, 0xc5, 0xc5, 0x74, 0x40, 0xc5, 0xc5,
@@ -11,6 +11,24 @@ test('applies CM93 M_COVR offsets in projected metres using OpenCPN sign convent
   assert.ok(Math.abs(shifted[0] - 0.0008983) < 0.00001, 'negative east offset moves chart geometry east');
   assert.ok(Math.abs(shifted[1] - 0.0017966) < 0.00002, 'negative north offset moves chart geometry north');
   assert.deepEqual(cm93ShiftWgs84PositionByProjectedOffset([12, 45], 0, 0), [12, 45]);
+});
+
+test('applies the matching _m_sor offset to chart features but not to M_COVR itself', () => {
+  const coverage = {
+    type: 'Feature',
+    properties: { cm93Class: '_m_sor', _wgsox: -100, _wgsoy: -200 },
+    geometry: { type: 'Polygon', coordinates: [[[-1, -1], [1, -1], [1, 1], [-1, 1], [-1, -1]]] },
+  };
+  const line = {
+    type: 'Feature',
+    properties: { cm93Class: 'DEPCNT' },
+    geometry: { type: 'LineString', coordinates: [[0, 0], [0.1, 0.1]] },
+  };
+  const originalCoverageCoordinates = JSON.stringify(coverage.geometry.coordinates);
+  applyCm93CoverageOffsets([coverage, line]);
+  assert.equal(JSON.stringify(coverage.geometry.coordinates), originalCoverageCoordinates);
+  assert.ok(line.geometry.coordinates[0][0] > 0);
+  assert.ok(line.geometry.coordinates[0][1] > 0);
 });
 
 test('decodes and validates a real CM93 V2 cell header', () => {
