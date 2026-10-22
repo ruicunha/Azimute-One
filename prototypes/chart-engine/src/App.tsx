@@ -963,12 +963,16 @@ export default function App() {
     cm93RawFeaturesRef.current = features;
     const quiltStartedAt = performance.now();
     const cacheKey = cm93QuiltCacheKey(selection.scale, cm93ClippingEngine, selectedForRendering.map(({ file }) => file));
-    const workerResult = await getOrBuildCm93CachedQuilt<ReturnType<typeof buildCm93CoverageQuiltFeatures>>(
-      cacheKey,
-      features as GeoJSON.Feature[],
-      selection.scale,
-      cm93ClippingEngine,
-    );
+    // Never persist a quilt assembled from a partially failed cell decode;
+    // a later successful decode must be allowed to produce a complete result.
+    const workerResult = failed === 0
+      ? await getOrBuildCm93CachedQuilt<ReturnType<typeof buildCm93CoverageQuiltFeatures>>(
+          cacheKey,
+          features as GeoJSON.Feature[],
+          selection.scale,
+          cm93ClippingEngine,
+        )
+      : null;
     if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
     // The worker performs the expensive geometry operation and persists the
     // processed result in IndexedDB. If workers/storage are unavailable, retain
