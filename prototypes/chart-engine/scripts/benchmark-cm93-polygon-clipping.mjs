@@ -260,6 +260,7 @@ const report = {
       comparedFeatureCount: compared,
       mismatchedFeatureCount: mismatched,
       comparisonErrorCount: comparisonErrors,
+      mismatchDetails,
       totalSymmetricDifferenceAreaDegreesSquared: totalSymmetricDifferenceArea,
       maxSymmetricDifferenceAreaDegreesSquared: maxSymmetricDifferenceArea,
       note: 'Symmetric-difference area is computed with polygon-clipping; small floating-point differences may occur. Review any nonzero mismatch before considering a library replacement.',
