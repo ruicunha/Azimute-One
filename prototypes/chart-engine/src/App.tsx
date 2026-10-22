@@ -72,10 +72,15 @@ function findCm93CellForPosition(files: File[], latitude: number, longitude: num
   return undefined;
 }
 
-const cm93QuiltLayerIds = [
-  'cm93-quilt-labels', 'cm93-quilt-depth-labels', 'cm93-quilt-icons',
-  'cm93-quilt-lines', 'cm93-quilt-points', 'cm93-quilt-fill',
-];
+const cm93Scales = ['Z', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
+const cm93QuiltLayerIds = cm93Scales.flatMap((scale) => {
+  const suffix = scale === 'Z' ? '' : '-' + scale;
+  return [
+    'cm93-quilt-labels' + suffix, 'cm93-quilt-depth-labels' + suffix,
+    'cm93-quilt-icons' + suffix, 'cm93-quilt-lines' + suffix,
+    'cm93-quilt-points' + suffix, 'cm93-quilt-fill' + suffix,
+  ];
+});
 
 const cm93KnownLineClasses = [
   'DEPCNT', 'COALNE', 'SLCONS', 'TSSBND', 'TSSLPT', 'RIVERS', 'CANALS',
@@ -131,10 +136,13 @@ function cm93ClassIcon(name: string): string {
   return icons[name] ?? '•';
 }
 
-function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string, visiblePointClasses: string[]): void {
+function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string, visiblePointClasses: string[], scale?: string): void {
+  const suffix = scale ? (scale === 'Z' ? '' : '-' + scale) : '';
+  const scaleFilter = scale ? [['==', ['get', 'cm93Scale'], scale]] : [];
   map.addLayer({
-    id: prefix + '-lines', type: 'line', source, minzoom: 2,
+    id: prefix + '-lines' + suffix, type: 'line', source, minzoom: 2,
     filter: ['all',
+      ...scaleFilter,
       ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]],
       ['in', ['get', 'cm93Class'], ['literal', cm93KnownLineClasses]],
     ],
@@ -147,8 +155,8 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
     },
   });
   map.addLayer({
-    id: prefix + '-icons', type: 'symbol', source, minzoom: 3,
-    filter: ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    id: prefix + '-icons' + suffix, type: 'symbol', source, minzoom: 3,
+    filter: ['all', ...scaleFilter, ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
     layout: {
       'text-field': ['match', ['get', 'cm93Class'],
         'LIGHTS', '✦',
@@ -171,8 +179,8 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
     },
   });
   map.addLayer({
-    id: prefix + '-labels', type: 'symbol', source, minzoom: 12,
-    filter: ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    id: prefix + '-labels' + suffix, type: 'symbol', source, minzoom: 12,
+    filter: ['all', ...scaleFilter, ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
     layout: {
       'text-field': ['coalesce', ['get', 'cm93DetailLabel'], ['case',
         ['==', ['get', 'cm93Class'], 'LIGHTS'],
@@ -189,8 +197,8 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
     paint: { 'text-color': '#36566a', 'text-halo-color': '#f7f4e9', 'text-halo-width': 1.2 },
   });
   map.addLayer({
-    id: prefix + '-depth-labels', type: 'symbol', source, minzoom: 10,
-    filter: ['all', ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]], ['==', ['get', 'cm93Class'], 'DEPCNT'], ['has', 'VALDCO']],
+    id: prefix + '-depth-labels' + suffix, type: 'symbol', source, minzoom: 10,
+    filter: ['all', ...scaleFilter, ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]], ['==', ['get', 'cm93Class'], 'DEPCNT'], ['has', 'VALDCO']],
     layout: {
       'symbol-placement': 'line',
       'text-field': ['concat', ['to-string', ['get', 'VALDCO']], ' m'],
@@ -878,9 +886,10 @@ export default function App() {
       // Tag each feature with its source cell. When a finer cell has no usable
       // information, this lets the next quilt retain older-scale features from
       // cells that are not covered by the new selection instead of blanking them.
+      const cellScale = key.split('.').pop()?.toUpperCase() ?? 'A';
       features.push(...cellFeatures.map((feature) => ({
         ...feature,
-        properties: { ...(feature.properties ?? {}), cm93SourceCell: key },
+        properties: { ...(feature.properties ?? {}), cm93SourceCell: key, cm93Scale: cellScale },
       })));
       // Yield periodically so the UI can respond while a viewport quilt is built.
       if ((index + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -906,17 +915,33 @@ export default function App() {
     } else {
       clearCm93Quilt(map);
       map.addSource('cm93-quilt', { type: 'geojson', data, tolerance: 0.5, maxzoom: 14, buffer: 0 });
-      map.addLayer({
-        id: 'cm93-quilt-fill', type: 'fill', source: 'cm93-quilt',
-        filter: ['all', ['in', ['geometry-type'], ['literal', ['Polygon', 'MultiPolygon']]], ['in', ['get', 'cm93Class'], ['literal', ['DEPARE', 'DRGARE', 'LNDARE', 'UNSARE']]]],
-        paint: {
-          'fill-color': ['match', ['get', 'cm93Class'],
-            'DEPARE', '#d5e8ec', 'DRGARE', '#d5e8ec', 'LNDARE', '#d9d6c8',
-            'UNSARE', '#d5e8ec', '#e5e0cb'],
-          'fill-opacity': 0.52,
-        },
-      });
-      addCm93PortrayalLayers(map, 'cm93-quilt', 'cm93-quilt', visibleCm93PointClassesRef.current);
+      // Paint coarser-scale areas first and progressively finer-scale fills
+      // above them. The fine chart only obscures the underlay where it has
+      // actual polygon geometry; gaps therefore reveal current-viewport coarse
+      // data instead of going blank or reusing stale features from an old view.
+      for (const scale of cm93Scales) {
+        const suffix = scale === 'Z' ? '' : '-' + scale;
+        map.addLayer({
+          id: 'cm93-quilt-fill' + suffix, type: 'fill', source: 'cm93-quilt',
+          filter: ['all',
+            ['==', ['get', 'cm93Scale'], scale],
+            ['in', ['geometry-type'], ['literal', ['Polygon', 'MultiPolygon']]],
+            ['in', ['get', 'cm93Class'], ['literal', ['DEPARE', 'DRGARE', 'LNDARE', 'UNSARE']]],
+          ],
+          paint: {
+            'fill-color': ['match', ['get', 'cm93Class'],
+              'DEPARE', '#d5e8ec', 'DRGARE', '#d5e8ec', 'LNDARE', '#d9d6c8',
+              'UNSARE', '#d5e8ec', '#e5e0cb'],
+            'fill-opacity': 1,
+          },
+        });
+      }
+      // Scale-specific line/symbol layers prevent coarser cells being drawn
+      // repeatedly in a single layer; all are bounded to the current viewport
+      // selection and ordered coarse-to-fine.
+      for (const scale of cm93Scales) {
+        addCm93PortrayalLayers(map, 'cm93-quilt', 'cm93-quilt', visibleCm93PointClassesRef.current, scale);
+      }
 
 
 
@@ -924,9 +949,9 @@ export default function App() {
 
     cm93RenderedFeaturesRef.current = quiltFeatures;
 
-    // The quilt source now contains the finest available cell for each target
-    // footprint, including coarser fallbacks and retained previous-scale coverage. Remove the whole-dataset overview
-    // only after this replacement is ready so the two sources never double-draw.
+    // The quilt source now contains current-viewport cells from the requested
+    // scale and every available coarser scale, painted coarse-to-fine. Remove
+    // the whole-dataset overview only after this replacement is ready.
     for (const layerId of ['cm93-cell-labels', 'cm93-cell-depth-labels', 'cm93-cell-icons', 'cm93-cell-points', 'cm93-cell-lines', 'cm93-cell-fill']) {
       if (map.getLayer(layerId)) map.removeLayer(layerId);
     }
@@ -960,12 +985,14 @@ export default function App() {
       classes: classSummary,
     });
     setStatus('ready');
-    const retainedFallbackCount = quiltFeatures.length - features.length;
+    const underlayCellCount = selection.files.filter((file) => {
+      const cellScale = (file.webkitRelativePath || file.name).split('.').pop()?.toUpperCase() ?? 'A';
+      return cm93Scales.indexOf(cellScale) < cm93Scales.indexOf(selection.scale);
+    }).length;
     setMessage('Automatic CM93 detail: ' + selection.files.length + ' ' + selection.scale +
-      '-scale cells, ' + features.length.toLocaleString() + ' current features (' + decoded +
+      '-scale and coarser underlay cells, ' + features.length.toLocaleString() + ' current features (' + decoded +
       ' newly decoded, ' + (selection.files.length - decoded - failed) + ' from cache); ' +
-      retainedFallbackCount.toLocaleString() + ' previous-scale fallback features retained; ' +
-      emptyCells + ' empty cells.' +
+      underlayCellCount + ' coarser-scale underlay cells; ' + emptyCells + ' empty cells.' +
       (failed ? ' ' + failed + ' cells failed to decode: ' + failedCellNames.slice(0, 5).join(', ') + (failedCellNames.length > 5 ? ', …' : '') + '.' : ''));
   }, []);
 
@@ -997,10 +1024,10 @@ export default function App() {
     const next = visibleCm93PointClassesRef.current.includes(name) ? visibleCm93PointClassesRef.current.filter((item) => item !== name) : [...visibleCm93PointClassesRef.current, name];
     visibleCm93PointClassesRef.current = next; setVisibleCm93PointClasses(next);
     const map = mapRef.current; if (!map) return;
-    for (const layerId of ['cm93-cell-icons', 'cm93-quilt-icons']) {
+    for (const layerId of ['cm93-cell-icons', ...cm93Scales.map((scale) => 'cm93-quilt-icons' + (scale === 'Z' ? '' : '-' + scale))]) {
       if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', next]]]);
     }
-    for (const layerId of ['cm93-cell-labels', 'cm93-quilt-labels']) {
+    for (const layerId of ['cm93-cell-labels', ...cm93Scales.map((scale) => 'cm93-quilt-labels' + (scale === 'Z' ? '' : '-' + scale))]) {
       if (map.getLayer(layerId)) map.setFilter(layerId, ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', next]]]);
     }
   };
