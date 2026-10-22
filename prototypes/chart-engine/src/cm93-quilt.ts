@@ -67,6 +67,8 @@ export type Cm93ViewportSelection = {
   files: Cm93CellFile[];
   /** Finer E/F/G cells used only for area fills, never points or lines. */
   fillFallbackFiles: Cm93CellFile[];
+  /** Coarser cells used only as area-fill underlays, never points or lines. */
+  fillUnderlayFiles: Cm93CellFile[];
   scaleCounts: Partial<Record<Cm93ScaleCode, number>>;
 };
 
@@ -136,6 +138,7 @@ export function selectCm93ViewportCells(
       // a selected coarse cell has no geometry. Keep these as fill-only
       // supplements so their points and lines cannot create multi-scale clutter.
       const fillFallbackFiles = new Map<string, Cm93CellFile>();
+      const fillUnderlayFiles = new Map<string, Cm93CellFile>();
       if (targetIndex >= CM93_SCALE_ORDER.indexOf('D') && targetScale !== 'G') {
         const fineScales = CM93_SCALE_ORDER.slice(Math.max(targetIndex + 1, CM93_SCALE_ORDER.indexOf('E'))).reverse();
         const fineSouth = Math.max(-79.5, Math.min(bounds.south, bounds.north));
@@ -163,11 +166,42 @@ export function selectCm93ViewportCells(
           if (selected.size + fillFallbackFiles.size >= maxCells) break;
         }
       }
-      return { scale: targetScale, files: [...selected.values()], fillFallbackFiles: [...fillFallbackFiles.values()], scaleCounts };
+      // Coarser coverage remains underneath the requested scale. Only area
+      // polygons from these cells are rendered, so their soundings, marks and
+      // lines cannot duplicate the selected-scale portrayal. Keep progressively
+      // coarser levels as a last resort where the nearest underlay also has gaps.
+      for (let underlayIndex = targetIndex - 1; underlayIndex >= 0; underlayIndex--) {
+        const underlayScale = CM93_SCALE_ORDER[underlayIndex];
+        const underlayStep = CM93_SCALE_STEPS[underlayScale];
+        const firstUnderlayLatitudeCell = Math.floor((south * 3 + 240) / underlayStep) * underlayStep;
+        const lastUnderlayLatitudeCell = Math.floor((north * 3 + 240) / underlayStep) * underlayStep;
+        const firstUnderlayLongitudeCell = Math.floor((normalizedLongitude(west) * 3) / underlayStep) * underlayStep;
+        const lastUnderlayLongitudeCell = Math.floor((normalizedLongitude(west) * 3 + longitudeSpan * 3) / underlayStep) * underlayStep;
+        for (let latitudeCell = firstUnderlayLatitudeCell; latitudeCell <= lastUnderlayLatitudeCell; latitudeCell += underlayStep) {
+          for (let longitudeCellUnwrapped = firstUnderlayLongitudeCell; longitudeCellUnwrapped <= lastUnderlayLongitudeCell; longitudeCellUnwrapped += underlayStep) {
+            const longitudeCell = ((longitudeCellUnwrapped % 1080) + 1080) % 1080;
+            const found = byPath.get(pathForCell(latitudeCell, longitudeCell, underlayScale));
+            if (!found) continue;
+            const key = (found.webkitRelativePath || found.name).toLowerCase();
+            if (!selected.has(key) && !fillFallbackFiles.has(key)) fillUnderlayFiles.set(key, found);
+            if (selected.size + fillFallbackFiles.size + fillUnderlayFiles.size >= maxCells) break;
+          }
+          if (selected.size + fillFallbackFiles.size + fillUnderlayFiles.size >= maxCells) break;
+        }
+        if (selected.size + fillFallbackFiles.size + fillUnderlayFiles.size >= maxCells) break;
+      }
+
+      return {
+        scale: targetScale,
+        files: [...selected.values()],
+        fillFallbackFiles: [...fillFallbackFiles.values()],
+        fillUnderlayFiles: [...fillUnderlayFiles.values()],
+        scaleCounts,
+      };
     }
   }
 
-  return { scale: targetScale, files: [], fillFallbackFiles: [], scaleCounts: {} };
+  return { scale: targetScale, files: [], fillFallbackFiles: [], fillUnderlayFiles: [], scaleCounts: {} };
 }
 
 /** Do not retain features from previous viewports or zoom levels. */

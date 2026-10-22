@@ -346,7 +346,7 @@ export default function App() {
           };
         })
         : [];
-      const selectedCells = [...(selection?.files ?? []), ...(selection?.fillFallbackFiles ?? [])];
+      const selectedCells = [...(selection?.files ?? []), ...(selection?.fillFallbackFiles ?? []), ...(selection?.fillUnderlayFiles ?? [])];
       const report = {
         reportType: 'Azimute One CM93 map-click diagnostic',
         capturedAt: new Date().toISOString(),
@@ -359,6 +359,7 @@ export default function App() {
           selectedCellCount: selectedCells.length,
           selectedScaleCounts: selection?.scaleCounts ?? {},
           selectedFillFallbackCellCount: selection?.fillFallbackFiles.length ?? 0,
+          selectedFillUnderlayCellCount: selection?.fillUnderlayFiles.length ?? 0,
           clickedPositionCell: clickedCell ? {
             path: clickedCell.webkitRelativePath || clickedCell.name,
             scale: ((clickedCell.webkitRelativePath || clickedCell.name).split('/').slice(-2, -1)[0] ?? '').toUpperCase(),
@@ -379,7 +380,7 @@ export default function App() {
         },
         notes: [
           'Selected-cell paths are filename/grid-based candidates, not verified M_COVR coverage.',
-          'Finer fill-fallback cells contribute area polygons only; points and lines remain at the primary scale.',
+          'Finer fill-fallback and coarser fill-underlay cells contribute area polygons only; points and lines remain at the primary scale.',
           'A null cachedDecodedFeatureCount means that cell is not currently in the decoded cache.',
           'Rendered features are only features MapLibre reports at the clicked pixel and may be empty if no CM93 layer is visible there.',
         ],
@@ -829,7 +830,7 @@ export default function App() {
       north: bounds.getNorth(),
     }, map.getZoom(), 1200);
 
-    if (selection.files.length === 0 && selection.fillFallbackFiles.length === 0) {
+    if (selection.files.length === 0 && selection.fillFallbackFiles.length === 0 && selection.fillUnderlayFiles.length === 0) {
       // A prior quilt is not valid fallback for the current viewport: leaving
       // it mounted makes portrayal depend on pan/zoom history. Clear it when
       // no current cell (at any coarser fallback scale) is available.
@@ -852,7 +853,7 @@ export default function App() {
     }
 
     setStatus('loading');
-    setMessage('Loading CM93 ' + selection.scale + '-scale detail: ' + (selection.files.length + selection.fillFallbackFiles.length) + ' viewport cells…');
+    setMessage('Loading CM93 ' + selection.scale + '-scale detail: ' + (selection.files.length + selection.fillFallbackFiles.length + selection.fillUnderlayFiles.length) + ' viewport cells…');
     const features: ReturnType<typeof cm93CellToGeoJSON>['geojson']['features'] = [];
     let failed = 0;
     let decoded = 0;
@@ -862,6 +863,7 @@ export default function App() {
     const selectedForRendering = [
       ...selection.files.map((file) => ({ file, fillOnly: false })),
       ...selection.fillFallbackFiles.map((file) => ({ file, fillOnly: true })),
+      ...selection.fillUnderlayFiles.map((file) => ({ file, fillOnly: true })),
     ];
     for (let index = 0; index < selectedForRendering.length; index++) {
       if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
@@ -891,8 +893,8 @@ export default function App() {
       }
       if (!cellFeatures) continue;
       if (cellFeatures.length === 0) emptyCells++;
-      // Fine fallback cells only contribute area polygons. Their point and line
-      // features are intentionally omitted to avoid duplicate marks and paths.
+      // Fine fallback and coarse underlay cells only contribute area polygons.
+      // Their point and line features are omitted to avoid multi-scale clutter.
       const renderableFeatures = fillOnly
         ? cellFeatures.filter((feature) =>
           (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') &&
@@ -990,7 +992,7 @@ export default function App() {
       .map(([name, entry]) => name + ': ' + entry.count + ' (' + [...entry.geometries].join('/') + ')');
     setCm93QuiltStats({
       scale: selection.scale + ' target (' + (scaleBreakdown || 'no cells') + ')',
-      cells: selection.files.length + selection.fillFallbackFiles.length,
+      cells: selection.files.length + selection.fillFallbackFiles.length + selection.fillUnderlayFiles.length,
       features: quiltFeatures.length,
       cached: cm93DecodedCacheRef.current.size,
       failed,
@@ -1001,9 +1003,8 @@ export default function App() {
       const cellScale = (file.webkitRelativePath || file.name).split('.').pop()?.toUpperCase() ?? 'A';
       return cm93Scales.indexOf(cellScale) < cm93Scales.indexOf(selection.scale);
     }).length;
-    setMessage('Automatic CM93 detail: ' + (selection.files.length + selection.fillFallbackFiles.length) + ' ' + selection.scale +
-      '-scale and coarser underlay cells, ' + features.length.toLocaleString() + ' current features (' + decoded +
-      ' newly decoded, ' + (selection.files.length + selection.fillFallbackFiles.length - decoded - failed) + ' from cache); ' +
+    setMessage('Automatic CM93 detail: ' + (selection.files.length + selection.fillFallbackFiles.length + selection.fillUnderlayFiles.length) + ' cells, including ' + selection.fillUnderlayFiles.length + ' coarser fill-underlay cells, ' + features.length.toLocaleString() + ' current features (' + decoded +
+      ' newly decoded, ' + (selection.files.length + selection.fillFallbackFiles.length + selection.fillUnderlayFiles.length - decoded - failed) + ' from cache); ' +
       underlayCellCount + ' coarser-scale underlay cells; ' + emptyCells + ' empty cells.' +
       (failed ? ' ' + failed + ' cells failed to decode: ' + failedCellNames.slice(0, 5).join(', ') + (failedCellNames.length > 5 ? ', …' : '') + '.' : ''));
   }, []);
