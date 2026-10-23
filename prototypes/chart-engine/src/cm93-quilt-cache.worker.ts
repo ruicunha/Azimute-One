@@ -14,7 +14,7 @@ type RequestMessage =
   | { id: number; type: 'clear' };
 
 const DB_NAME = 'azimute-one-cm93-cache';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE_NAME = 'quilt-results';
 const ACCESS_STORE_NAME = 'quilt-access';
 const CACHE_BUDGET_BYTES = 250 * 1024 * 1024;
@@ -162,7 +162,14 @@ async function readEntry(key: string): Promise<unknown | null> {
 }
 
 async function writeEntry(key: string, value: unknown): Promise<boolean> {
-  const sizeBytes = estimateSizeBytes(value);
+  // Persist a compact byte payload so cache hits can transfer ownership of the
+  // buffer to the UI thread instead of structured-cloning thousands of objects.
+  const serialized = new TextEncoder().encode(JSON.stringify(value) ?? 'null');
+  const serializedBuffer = serialized.buffer.slice(
+    serialized.byteOffset,
+    serialized.byteOffset + serialized.byteLength,
+  ) as ArrayBuffer;
+  const sizeBytes = serializedBuffer.byteLength;
   if (sizeBytes > CACHE_BUDGET_BYTES) { counters.skippedOversized++; return false; }
   const database = await openDatabase();
   try {
@@ -170,7 +177,7 @@ async function writeEntry(key: string, value: unknown): Promise<boolean> {
       const transaction = database.transaction(STORE_NAME, 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
       const now = Date.now();
-      store.put({ key, value, savedAt: now, lastAccessedAt: now, sizeBytes } satisfies CacheEntry);
+      store.put({ key, value: serializedBuffer, savedAt: now, lastAccessedAt: now, sizeBytes } satisfies CacheEntry);
       const accessStore = transaction.objectStore(ACCESS_STORE_NAME);
       accessStore.put({ key, lastAccessedAt: now });
       const entriesRequest = store.getAll() as IDBRequest<CacheEntry[]>;
@@ -306,7 +313,10 @@ async function lookup(request: Extract<RequestMessage, { type: 'lookup' }>) {
     } else if (!lastTelemetry) {
       refreshTelemetry();
     }
-    return { cacheHit: true, value: cached, timings: { indexedDbReadMs, workerProcessingMs: performance.now() - workerStartedAt }, telemetry: lastTelemetry ? { ...lastTelemetry, ...counters } : undefined };
+    const payload = cached instanceof ArrayBuffer
+      ? { serializedPayload: cached }
+      : { value: cached }; // Compatibility with entries created before the byte-payload format.
+    return { cacheHit: true, ...payload, timings: { indexedDbReadMs, workerProcessingMs: performance.now() - workerStartedAt }, telemetry: lastTelemetry ? { ...lastTelemetry, ...counters } : undefined };
   }
 
   counters.misses++;
@@ -332,12 +342,18 @@ async function build(request: Extract<RequestMessage, { type: 'build' }>) {
 
 const workerScope = self as unknown as {
   addEventListener(type: string, listener: (event: MessageEvent<RequestMessage>) => void): void;
-  postMessage(message: unknown): void;
+  postMessage(message: unknown, transfer?: Transferable[]): void;
 };
 
 workerScope.addEventListener('message', (event: MessageEvent<RequestMessage>) => {
   const request = event.data;
-  const reply = (ok: boolean, value?: unknown, error?: string) => workerScope.postMessage({ id: request.id, ok, value, error });
+  const reply = (ok: boolean, value?: unknown, error?: string) => {
+    const serializedPayload = value && typeof value === 'object'
+      ? (value as { serializedPayload?: unknown }).serializedPayload
+      : undefined;
+    const transfer = serializedPayload instanceof ArrayBuffer ? [serializedPayload] : [];
+    workerScope.postMessage({ id: request.id, ok, value, error }, transfer);
+  };
   const operation = request.type === 'lookup'
     ? lookup(request).then((value) => reply(true, value))
     : request.type === 'build'
