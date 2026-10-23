@@ -10,7 +10,7 @@ import { cm93CellToGeoJSON, decodeCm93FeatureAttributes, parseCm93Cell, parseCm9
 import { buildCm93QuiltFeatures, selectCm93ViewportCells, type Cm93ScaleCode } from './cm93-quilt';
 import { buildCm93CoverageQuiltFeatures, cm93PointInCoverage, type Cm93MultiPolygonCoordinates, type Cm93PolygonClippingEngine } from './cm93-quilt-geometry';
 import { benchmarkCm93WebGpuPolygonCandidates, type Cm93WebGpuCandidateBenchmark } from './cm93-webgpu';
-import { cm93QuiltCacheKey, getOrBuildCm93CachedQuilt, onCm93CacheTelemetry, type Cm93CacheTelemetry, type Cm93CacheTimings } from './cm93-quilt-cache';
+import { buildCm93CachedQuilt, cm93QuiltCacheKey, lookupCm93CachedQuilt, onCm93CacheTelemetry, type Cm93CacheTelemetry, type Cm93CacheTimings } from './cm93-quilt-cache';
 
 type Status = 'loading' | 'ready' | 'error' | 'idle';
 
@@ -925,58 +925,11 @@ export default function App() {
 
     setStatus('loading');
     setMessage('Loading CM93 ' + selection.scale + '-scale coverage quilt: ' + selection.files.length + ' candidate cells…');
-    const features: ReturnType<typeof cm93CellToGeoJSON>['geojson']['features'] = [];
-    let failed = 0;
-    let decoded = 0;
-    let emptyCells = 0;
-    const failedCellNames: string[] = [];
-    const decodeStartedAt = performance.now();
 
+    // The selected file identities and scale are sufficient to check the quilt
+    // cache. Do that before parsing/decoding any cells so a persistent cache hit
+    // actually avoids the main-thread work the cache was introduced to remove.
     const selectedForRendering = selection.files.map((file) => ({ file }));
-    for (let index = 0; index < selectedForRendering.length; index++) {
-      if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
-      const { file } = selectedForRendering[index];
-      const key = (file.webkitRelativePath || file.name).toLowerCase();
-      let cellFeatures = cm93DecodedCacheRef.current.get(key);
-      if (cellFeatures) {
-        // Refresh insertion order for a small LRU-style cache.
-        cm93DecodedCacheRef.current.delete(key);
-        cm93DecodedCacheRef.current.set(key, cellFeatures);
-      } else {
-        try {
-          const cell = parseCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
-          cellFeatures = cm93CellToGeoJSON(cell, dictionary).geojson.features;
-          cm93DecodedCacheRef.current.set(key, cellFeatures);
-          decoded++;
-          while (cm93DecodedCacheRef.current.size > 240) {
-            const oldest = cm93DecodedCacheRef.current.keys().next().value;
-            if (oldest === undefined) break;
-            cm93DecodedCacheRef.current.delete(oldest);
-          }
-        } catch {
-          failed++;
-          failedCellNames.push(file.name);
-          continue;
-        }
-      }
-      if (!cellFeatures) continue;
-      if (cellFeatures.length === 0) emptyCells++;
-      const cellScale = key.split('.').pop()?.toUpperCase() ?? 'A';
-      features.push(...cellFeatures.map((feature) => ({
-        ...feature,
-        properties: { ...(feature.properties ?? {}), cm93SourceCell: key, cm93Scale: cellScale },
-      })));
-      // Yield periodically so the UI can respond while a viewport quilt is built.
-      if ((index + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    }
-
-    const decodeMs = performance.now() - decodeStartedAt;
-    if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
-    // Do not reuse a prior zoom's features when selected cells fail to decode
-    // or contain no usable geometry. That creates stale overlays and makes the
-    // chart depend on navigation history.
-    cm93RawFeaturesRef.current = features;
-    const quiltStartedAt = performance.now();
     const selectedCellPaths = new Set(selectedForRendering.map(({ file }) =>
       (file.webkitRelativePath || file.name).toLowerCase(),
     ));
@@ -984,16 +937,78 @@ export default function App() {
       selectedCellPaths.has((file.webkitRelativePath || file.name).toLowerCase()),
     );
     const cacheKey = cm93QuiltCacheKey(selection.scale, cm93ClippingEngine, cacheFiles);
-    // Never persist a quilt assembled from a partially failed cell decode;
-    // a later successful decode must be allowed to produce a complete result.
-    const memoryCachedQuilt = failed === 0 && cm93CoverageQuiltCacheRef.current?.key === cacheKey
+    const memoryCachedQuilt = cm93CoverageQuiltCacheRef.current?.key === cacheKey
       ? cm93CoverageQuiltCacheRef.current.value
       : null;
-    // Prefer the same-session in-memory result before asking the worker/IndexedDB.
-    // A persistent hit returns thousands of GeoJSON features through structured
-    // cloning, which can dominate a warm render even though clipping is avoided.
-    const workerResult = failed === 0 && !memoryCachedQuilt
-      ? await getOrBuildCm93CachedQuilt<ReturnType<typeof buildCm93CoverageQuiltFeatures>>(
+
+    let lookupResult: Awaited<ReturnType<typeof lookupCm93CachedQuilt<ReturnType<typeof buildCm93CoverageQuiltFeatures>>>> | null = null;
+    let quiltStartedAt = performance.now();
+    if (!memoryCachedQuilt) {
+      lookupResult = await lookupCm93CachedQuilt<ReturnType<typeof buildCm93CoverageQuiltFeatures>>(cacheKey);
+      if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
+    }
+    const indexedDbCachedQuilt = lookupResult?.cacheHit ? lookupResult.value : null;
+    const cacheHasQuilt = Boolean(memoryCachedQuilt || indexedDbCachedQuilt);
+
+    const features: ReturnType<typeof cm93CellToGeoJSON>['geojson']['features'] = [];
+    let failed = 0;
+    let decoded = 0;
+    let emptyCells = 0;
+    const failedCellNames: string[] = [];
+    let decodeMs = 0;
+
+    // A valid processed quilt is reusable without decoding the selected cells.
+    // Decode only after both memory and IndexedDB have missed.
+    if (!cacheHasQuilt) {
+      const decodeStartedAt = performance.now();
+      for (let index = 0; index < selectedForRendering.length; index++) {
+        if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
+        const { file } = selectedForRendering[index];
+        const key = (file.webkitRelativePath || file.name).toLowerCase();
+        let cellFeatures = cm93DecodedCacheRef.current.get(key);
+        if (cellFeatures) {
+          // Refresh insertion order for a small LRU-style cache.
+          cm93DecodedCacheRef.current.delete(key);
+          cm93DecodedCacheRef.current.set(key, cellFeatures);
+        } else {
+          try {
+            const cell = parseCm93Cell(new Uint8Array(await file.arrayBuffer()), file.name);
+            cellFeatures = cm93CellToGeoJSON(cell, dictionary).geojson.features;
+            cm93DecodedCacheRef.current.set(key, cellFeatures);
+            decoded++;
+            while (cm93DecodedCacheRef.current.size > 240) {
+              const oldest = cm93DecodedCacheRef.current.keys().next().value;
+              if (oldest === undefined) break;
+              cm93DecodedCacheRef.current.delete(oldest);
+            }
+          } catch {
+            failed++;
+            failedCellNames.push(file.name);
+            continue;
+          }
+        }
+        if (!cellFeatures) continue;
+        if (cellFeatures.length === 0) emptyCells++;
+        const cellScale = key.split('.').pop()?.toUpperCase() ?? 'A';
+        features.push(...cellFeatures.map((feature) => ({
+          ...feature,
+          properties: { ...(feature.properties ?? {}), cm93SourceCell: key, cm93Scale: cellScale },
+        })));
+        // Yield periodically so panning and other UI work remain responsive.
+        if ((index + 1) % 3 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      decodeMs = performance.now() - decodeStartedAt;
+      if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
+      // Keep quiltMs focused on geometry/cache-result processing rather than
+      // counting cell decoding twice; the lookup's worker timings are separate.
+      quiltStartedAt = performance.now();
+    }
+
+    // Cached geometry is already processed. Keep raw features empty on hits;
+    // the optional raw-feature WebGPU benchmark can run after a cache miss/build.
+    cm93RawFeaturesRef.current = cacheHasQuilt ? [] : features;
+    const workerResult = !cacheHasQuilt && failed === 0
+      ? await buildCm93CachedQuilt<ReturnType<typeof buildCm93CoverageQuiltFeatures>>(
           cacheKey,
           features as GeoJSON.Feature[],
           selection.scale,
@@ -1001,17 +1016,18 @@ export default function App() {
         )
       : null;
     if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
-    // The worker performs the expensive geometry operation and persists the
-    // processed result in IndexedDB. If workers/storage are unavailable, retain
-    // the original synchronous implementation as a safe fallback.
-    const cacheHit = Boolean(memoryCachedQuilt) || (workerResult?.cacheHit ?? false);
-    const cacheSource: 'memory' | 'indexeddb' | 'built' = memoryCachedQuilt ? 'memory' : workerResult?.cacheHit ? 'indexeddb' : 'built';
-    if (failed === 0 && !workerResult && !memoryCachedQuilt) setCm93CacheFallbacks((count) => count + 1);
+
+    // Keep the no-worker fallback, but only run it after a genuine cache miss.
+    const cacheHit = cacheHasQuilt;
+    const cacheSource: 'memory' | 'indexeddb' | 'built' = memoryCachedQuilt ? 'memory' : indexedDbCachedQuilt ? 'indexeddb' : 'built';
+    if (!cacheHasQuilt && failed === 0 && !workerResult) setCm93CacheFallbacks((count) => count + 1);
+    if (lookupResult?.telemetry) setCm93CacheTelemetry(lookupResult.telemetry);
     if (workerResult?.telemetry) setCm93CacheTelemetry(workerResult.telemetry);
     const coverageQuilt = memoryCachedQuilt
+      ?? indexedDbCachedQuilt
       ?? workerResult?.value
       ?? buildCm93CoverageQuiltFeatures(features, selection.scale, cm93ClippingEngine);
-    if (failed === 0 && !memoryCachedQuilt) {
+    if (failed === 0 && !memoryCachedQuilt && !indexedDbCachedQuilt) {
       cm93CoverageQuiltCacheRef.current = { key: cacheKey, value: coverageQuilt };
     }
     cm93CoverageByScaleRef.current = coverageQuilt.coverageByScale;
@@ -1019,7 +1035,14 @@ export default function App() {
     const quiltFeatures = buildCm93QuiltFeatures(coverageQuilt.features);
     const geoJsonPreparationMs = performance.now() - geoJsonPreparationStartedAt;
     const quiltMs = performance.now() - quiltStartedAt;
-    const cacheTimings = { ...(workerResult?.timings ?? {}), geoJsonPreparationMs };
+    const lookupRoundTripMs = lookupResult?.timings?.workerRoundTripMs ?? 0;
+    const buildRoundTripMs = workerResult?.timings?.workerRoundTripMs ?? 0;
+    const cacheTimings = {
+      ...(lookupResult?.timings ?? {}),
+      ...(workerResult?.timings ?? {}),
+      workerRoundTripMs: lookupRoundTripMs + buildRoundTripMs || undefined,
+      geoJsonPreparationMs,
+    };
     if (quiltFeatures.length === 0) {
       cm93CoverageByScaleRef.current = {};
       cm93WebGpuBenchmarkScaleRef.current = null;

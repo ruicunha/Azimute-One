@@ -69,12 +69,13 @@ function sendRequest(activeWorker: Worker, message: Omit<WorkerRequest, 'id'>): 
   });
 }
 
-export async function getOrBuildCm93CachedQuilt<T>(
+export async function lookupCm93CachedQuilt<T>(
   key: string,
-  features: GeoJSON.Feature[],
-  scale: Cm93ScaleCode,
-  engine: Cm93PolygonClippingEngine,
-): Promise<{ value: T; cacheHit: boolean; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings } | null> {
+): Promise<
+  | { value: T; cacheHit: true; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings }
+  | { cacheHit: false; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings }
+  | null
+> {
   const activeWorker = getWorker();
   if (!activeWorker) return null;
 
@@ -83,19 +84,45 @@ export async function getOrBuildCm93CachedQuilt<T>(
     const lookup = await sendRequest(activeWorker, { type: 'lookup', key }) as
       | { value: T; cacheHit: true; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings }
       | { cacheHit: false; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings };
-    const lookupTimings = { ...lookup.timings, workerRoundTripMs: performance.now() - lookupStartedAt };
-    if (lookup.cacheHit) return { ...lookup, timings: lookupTimings } as { value: T; cacheHit: boolean; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings };
-
-    // Only cold/missing entries transfer decoded features to the worker.
-    // This avoids structured-cloning thousands of GeoJSON features on every hit.
-    const buildStartedAt = performance.now();
-    const built = await sendRequest(activeWorker, { type: 'build', key, features, scale, engine }) as
-      { value: T; cacheHit: boolean; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings };
-    return { ...built, timings: { ...built.timings, workerRoundTripMs: performance.now() - buildStartedAt } };
+    return { ...lookup, timings: { ...lookup.timings, workerRoundTripMs: performance.now() - lookupStartedAt } };
   } catch {
     // Worker/cache failures fall back to the original CPU processing path.
     return null;
   }
+}
+
+export async function buildCm93CachedQuilt<T>(
+  key: string,
+  features: GeoJSON.Feature[],
+  scale: Cm93ScaleCode,
+  engine: Cm93PolygonClippingEngine,
+): Promise<{ value: T; cacheHit: false; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings } | null> {
+  const activeWorker = getWorker();
+  if (!activeWorker) return null;
+
+  try {
+    // Called only after a cache miss, so decoded features are transferred once
+    // and expensive quilt geometry remains off the UI thread.
+    const buildStartedAt = performance.now();
+    const built = await sendRequest(activeWorker, { type: 'build', key, features, scale, engine }) as
+      { value: T; cacheHit: false; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings };
+    return { ...built, timings: { ...built.timings, workerRoundTripMs: performance.now() - buildStartedAt } };
+  } catch {
+    return null;
+  }
+}
+
+export async function getOrBuildCm93CachedQuilt<T>(
+  key: string,
+  features: GeoJSON.Feature[],
+  scale: Cm93ScaleCode,
+  engine: Cm93PolygonClippingEngine,
+): Promise<{ value: T; cacheHit: boolean; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings } | null> {
+  const lookup = await lookupCm93CachedQuilt<T>(key);
+  if (!lookup) return null;
+  if (lookup.cacheHit) return { value: lookup.value as T, cacheHit: true, telemetry: lookup.telemetry, timings: lookup.timings };
+  const built = await buildCm93CachedQuilt<T>(key, features, scale, engine);
+  return built ? { ...built, timings: { ...lookup.timings, ...built.timings } } : null;
 }
 
 export function cm93QuiltCacheKey(scale: string, clippingEngine: string, files: File[]): string {
