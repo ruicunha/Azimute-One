@@ -14,7 +14,7 @@ type RequestMessage =
   | { id: number; type: 'clear' };
 
 const DB_NAME = 'azimute-one-cm93-cache';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE_NAME = 'quilt-results';
 const ACCESS_STORE_NAME = 'quilt-access';
 const CACHE_BUDGET_BYTES = 250 * 1024 * 1024;
@@ -32,7 +32,7 @@ type CacheTelemetry = {
   budgetBytes: number;
 };
 
-type CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number };
+type CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number; serializedPayloadBytes?: number; serializeMs?: number };
 
 const counters = { hits: 0, misses: 0, readErrors: 0, writes: 0, writeErrors: 0, evictions: 0, skippedOversized: 0 };
 let lastTelemetry: CacheTelemetry | null = null;
@@ -161,16 +161,25 @@ async function readEntry(key: string): Promise<unknown | null> {
   }
 }
 
-async function writeEntry(key: string, value: unknown): Promise<boolean> {
-  const sizeBytes = estimateSizeBytes(value);
-  if (sizeBytes > CACHE_BUDGET_BYTES) { counters.skippedOversized++; return false; }
+async function writeEntry(key: string, value: unknown): Promise<{ written: boolean; serializedPayloadBytes: number; serializeMs: number }> {
+  // Persist a compact byte payload so cache hits can transfer ownership of the
+  // buffer to the UI thread instead of structured-cloning thousands of objects.
+  const serializeStartedAt = performance.now();
+  const serialized = new TextEncoder().encode(JSON.stringify(value) ?? 'null');
+  const serializeMs = performance.now() - serializeStartedAt;
+  const serializedBuffer = serialized.buffer.slice(
+    serialized.byteOffset,
+    serialized.byteOffset + serialized.byteLength,
+  ) as ArrayBuffer;
+  const sizeBytes = serializedBuffer.byteLength;
+  if (sizeBytes > CACHE_BUDGET_BYTES) { counters.skippedOversized++; return { written: false, serializedPayloadBytes: sizeBytes, serializeMs }; }
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const transaction = database.transaction([STORE_NAME, ACCESS_STORE_NAME], 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
       const now = Date.now();
-      store.put({ key, value, savedAt: now, lastAccessedAt: now, sizeBytes } satisfies CacheEntry);
+      store.put({ key, value: serializedBuffer, savedAt: now, lastAccessedAt: now, sizeBytes } satisfies CacheEntry);
       const accessStore = transaction.objectStore(ACCESS_STORE_NAME);
       accessStore.put({ key, lastAccessedAt: now });
       const entriesRequest = store.getAll() as IDBRequest<CacheEntry[]>;
@@ -203,7 +212,7 @@ async function writeEntry(key: string, value: unknown): Promise<boolean> {
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not persist the CM93 quilt cache.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('CM93 quilt cache write was aborted.'));
     });
-    return true;
+    return { written: true, serializedPayloadBytes: sizeBytes, serializeMs };
   } finally {
     database.close();
   }
@@ -306,7 +315,10 @@ async function lookup(request: Extract<RequestMessage, { type: 'lookup' }>) {
     } else if (!lastTelemetry) {
       refreshTelemetry();
     }
-    return { cacheHit: true, value: cached, timings: { indexedDbReadMs, workerProcessingMs: performance.now() - workerStartedAt }, telemetry: lastTelemetry ? { ...lastTelemetry, ...counters } : undefined };
+    const payload = cached instanceof ArrayBuffer
+      ? { serializedPayload: cached }
+      : { value: cached }; // Compatibility with entries created before the byte-payload format.
+    return { cacheHit: true, ...payload, timings: { indexedDbReadMs, workerProcessingMs: performance.now() - workerStartedAt }, telemetry: lastTelemetry ? { ...lastTelemetry, ...counters } : undefined };
   }
 
   counters.misses++;
@@ -318,8 +330,13 @@ async function build(request: Extract<RequestMessage, { type: 'build' }>) {
   const value = buildCm93CoverageQuiltFeatures(request.features, request.scale, request.engine);
   const geometryBuildMs = performance.now() - buildStartedAt;
   const persistStartedAt = performance.now();
+  let serializedPayloadBytes: number | undefined;
+  let serializeMs: number | undefined;
   try {
-    if (await writeEntry(request.key, value)) counters.writes++;
+    const writeResult = await writeEntry(request.key, value);
+    if (writeResult.written) counters.writes++;
+    serializedPayloadBytes = writeResult.serializedPayloadBytes;
+    serializeMs = writeResult.serializeMs;
   } catch {
     counters.writeErrors++;
   }
@@ -327,17 +344,23 @@ async function build(request: Extract<RequestMessage, { type: 'build' }>) {
   let telemetry: CacheTelemetry | undefined;
   const telemetryStartedAt = performance.now();
   try { telemetry = await getTelemetry(); } catch { /* Stats are diagnostic only. */ }
-  return { value, cacheHit: false, telemetry, timings: { geometryBuildMs, persistMs, telemetryMs: performance.now() - telemetryStartedAt } };
+  return { value, cacheHit: false, telemetry, timings: { geometryBuildMs, persistMs, telemetryMs: performance.now() - telemetryStartedAt, serializedPayloadBytes, serializeMs } };
 }
 
 const workerScope = self as unknown as {
   addEventListener(type: string, listener: (event: MessageEvent<RequestMessage>) => void): void;
-  postMessage(message: unknown): void;
+  postMessage(message: unknown, transfer?: Transferable[]): void;
 };
 
 workerScope.addEventListener('message', (event: MessageEvent<RequestMessage>) => {
   const request = event.data;
-  const reply = (ok: boolean, value?: unknown, error?: string) => workerScope.postMessage({ id: request.id, ok, value, error });
+  const reply = (ok: boolean, value?: unknown, error?: string) => {
+    const serializedPayload = value && typeof value === 'object'
+      ? (value as { serializedPayload?: unknown }).serializedPayload
+      : undefined;
+    const transfer = serializedPayload instanceof ArrayBuffer ? [serializedPayload] : [];
+    workerScope.postMessage({ id: request.id, ok, value, error }, transfer);
+  };
   const operation = request.type === 'lookup'
     ? lookup(request).then((value) => reply(true, value))
     : request.type === 'build'
