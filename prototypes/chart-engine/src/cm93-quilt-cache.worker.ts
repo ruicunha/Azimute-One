@@ -19,6 +19,11 @@ const DB_VERSION = 6;
 const STORE_NAME = 'quilt-results';
 const ACCESS_STORE_NAME = 'quilt-access';
 const CACHE_BUDGET_BYTES = 250 * 1024 * 1024;
+// Gzip saves storage, but the measured browser path spends far more time
+// decompressing moderate GeoJSON payloads than transferring them. Keep small
+// and medium entries as JSON; retain gzip for larger entries where storage
+// savings are more valuable.
+const MIN_GZIP_PAYLOAD_BYTES = 5 * 1024 * 1024;
 
 type CacheTelemetry = {
   hits: number;
@@ -185,7 +190,7 @@ async function writeEntry(key: string, value: unknown): Promise<{ written: boole
   let payloadBuffer = serializedBuffer;
   let payloadEncoding: 'gzip' | 'json' = 'json';
   const compressStartedAt = performance.now();
-  if (typeof CompressionStream !== 'undefined') {
+  if (serializedBuffer.byteLength >= MIN_GZIP_PAYLOAD_BYTES && typeof CompressionStream !== 'undefined') {
     try {
       const stream = new Blob([serializedBuffer]).stream().pipeThrough(new CompressionStream('gzip'));
       const compressed = await new Response(stream).arrayBuffer();
