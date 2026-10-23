@@ -80,6 +80,80 @@ try {
     .filter((line) => /Persistent quilt cache:|Cache stages \(ms\):|Last update timings:|Cache hits \/ misses:/.test(line));
   await page.screenshot({ path: path.join(outputDir, 'persistent-cache-hit.png'), fullPage: true });
 
+  // Benchmark real zoom transitions on the deployed map. Capture the structured
+  // diagnostics from the app clipboard so every sample includes viewport zoom,
+  // cell mix, cache source, worker/geometry stages and MapLibre lifecycle timings.
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const diagnosticsButton = page.getByRole('button', { name: 'Copy performance diagnostics (JSON)' });
+  const captureDiagnostics = async (label) => {
+    await diagnosticsButton.click();
+    await page.getByText('CM93 performance diagnostics copied.', { exact: true }).waitFor({ timeout: 10000 });
+    const report = JSON.parse(await page.evaluate(() => navigator.clipboard.readText()));
+    const sample = {
+      label,
+      capturedAt: report.capturedAt,
+      viewport: report.viewport,
+      performance: report.performance,
+      cache: report.cache ? {
+        hits: report.cache.hits,
+        misses: report.cache.misses,
+        entries: report.cache.entries,
+        estimatedBytes: report.cache.estimatedBytes,
+      } : null,
+    };
+    await fs.writeFile(path.join(outputDir, `zoom-${label}.json`), JSON.stringify(report, null, 2));
+    return sample;
+  };
+  const mapCanvas = page.locator('.maplibregl-canvas').first();
+  const canvasBounds = await mapCanvas.boundingBox();
+  if (!canvasBounds) throw new Error('MapLibre canvas was not visible for zoom-transition benchmark.');
+  const mapPoint = {
+    x: canvasBounds.x + canvasBounds.width / 2,
+    y: canvasBounds.y + canvasBounds.height / 2,
+  };
+  await page.mouse.move(mapPoint.x, mapPoint.y);
+  result.zoomTransitions = [];
+  result.zoomTransitions.push(await captureDiagnostics('overview-before-zoom'));
+  const overviewZoom = result.zoomTransitions[0].viewport?.zoom;
+  await page.mouse.wheel(0, -720);
+  await page.waitForTimeout(2500);
+  const closeupFirst = await captureDiagnostics('closeup-first-pass');
+  if (closeupFirst.viewport?.zoom === overviewZoom) {
+    throw new Error(`Zoom-transition benchmark did not change map zoom (still ${overviewZoom}).`);
+  }
+  result.zoomTransitions.push(closeupFirst);
+  // Return to the same overview and repeat the same zoom gesture. This helps
+  // distinguish cold viewport work from reuse of the same processed cell quilt.
+  await page.mouse.wheel(0, 720);
+  await page.waitForTimeout(1800);
+  await page.mouse.wheel(0, -720);
+  await page.waitForTimeout(2500);
+  const closeupRepeat = await captureDiagnostics('closeup-repeat-pass');
+  result.zoomTransitions.push(closeupRepeat);
+  result.checks.zoomTransitionBenchmark = true;
+  result.zoomTransitionComparison = {
+    firstPass: {
+      zoom: closeupFirst.viewport?.zoom,
+      scaleAndCellMix: closeupFirst.performance?.targetScaleAndCellMix,
+      viewportCellCount: closeupFirst.performance?.viewportCellCount,
+      quiltCacheSource: closeupFirst.performance?.quiltCacheSource,
+      quiltCacheHit: closeupFirst.performance?.quiltCacheHit,
+      timingsMs: closeupFirst.performance?.timingsMs,
+      cacheTimingsMs: closeupFirst.performance?.cacheTimingsMs,
+    },
+    repeatPass: {
+      zoom: closeupRepeat.viewport?.zoom,
+      scaleAndCellMix: closeupRepeat.performance?.targetScaleAndCellMix,
+      viewportCellCount: closeupRepeat.performance?.viewportCellCount,
+      quiltCacheSource: closeupRepeat.performance?.quiltCacheSource,
+      quiltCacheHit: closeupRepeat.performance?.quiltCacheHit,
+      timingsMs: closeupRepeat.performance?.timingsMs,
+      cacheTimingsMs: closeupRepeat.performance?.cacheTimingsMs,
+    },
+    interpretation: 'Compare matching zoom and cell mixes. A cache hit reuses processed geometry, but GeoJSON preparation, source updates and MapLibre lifecycle/render work may still dominate. Timings are lifecycle proxies, not isolated GPU timings.',
+  };
+  await page.screenshot({ path: path.join(outputDir, 'zoom-transition-closeup.png'), fullPage: true });
+
   // Layer-isolation smoke experiment: keep the same loaded viewport and
   // toggle one portrayal category at a time. Record interaction-to-screenshot
   // wall time as a responsiveness proxy (not as a pure MapLibre/GPU metric).
