@@ -1,7 +1,7 @@
 import type { Cm93PolygonClippingEngine } from './cm93-quilt-geometry.ts';
 import type { Cm93ScaleCode } from './cm93-quilt.ts';
 
-export type Cm93CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; workerRoundTripMs?: number; workerOverheadMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number; serializedPayloadBytes?: number; serializeMs?: number; deserializeMs?: number; cacheTransferMode?: 'arraybuffer-transfer' | 'structured-clone' };
+export type Cm93CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; workerRoundTripMs?: number; workerOverheadMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number; serializedPayloadBytes?: number; compressedPayloadBytes?: number; serializeMs?: number; compressMs?: number; decompressMs?: number; deserializeMs?: number; cacheCompression?: 'gzip' | 'none'; cacheTransferMode?: 'arraybuffer-transfer' | 'structured-clone' };
 
 export type Cm93CacheTelemetry = {
   hits: number;
@@ -82,31 +82,43 @@ export async function lookupCm93CachedQuilt<T>(
   try {
     const lookupStartedAt = performance.now();
     const lookup = await sendRequest(activeWorker, { type: 'lookup', key }) as
-      | { value: T; serializedPayload?: ArrayBuffer; cacheHit: true; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings }
+      | { value: T; serializedPayload?: ArrayBuffer; payloadEncoding?: 'gzip' | 'json'; cacheHit: true; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings }
       | { cacheHit: false; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings };
     const workerRoundTripMs = performance.now() - lookupStartedAt;
     const workerProcessingMs = lookup.timings?.workerProcessingMs;
     const baseTimings = { ...lookup.timings, workerRoundTripMs, workerOverheadMs: workerProcessingMs === undefined ? undefined : Math.max(0, workerRoundTripMs - workerProcessingMs) };
     if (lookup.cacheHit && lookup.serializedPayload instanceof ArrayBuffer) {
       const payload = lookup.serializedPayload;
-      const deserializeStartedAt = performance.now();
+      const decompressStartedAt = performance.now();
+      let serializedPayload = payload;
+      let decompressMs = 0;
       try {
-        const value = JSON.parse(new TextDecoder().decode(payload)) as T;
+        if (lookup.payloadEncoding === 'gzip') {
+          if (typeof DecompressionStream === 'undefined') throw new Error('Gzip decompression is unavailable.');
+          const stream = new Blob([payload]).stream().pipeThrough(new DecompressionStream('gzip'));
+          serializedPayload = await new Response(stream).arrayBuffer();
+          decompressMs = performance.now() - decompressStartedAt;
+        }
+        const deserializeStartedAt = performance.now();
+        const value = JSON.parse(new TextDecoder().decode(serializedPayload)) as T;
         return {
           cacheHit: true,
           value,
           telemetry: lookup.telemetry,
           timings: {
             ...baseTimings,
-            serializedPayloadBytes: payload.byteLength,
+            serializedPayloadBytes: serializedPayload.byteLength,
+            compressedPayloadBytes: payload.byteLength,
+            decompressMs,
             deserializeMs: performance.now() - deserializeStartedAt,
+            cacheCompression: lookup.payloadEncoding === 'gzip' ? 'gzip' : 'none',
             cacheTransferMode: 'arraybuffer-transfer',
           },
         };
       } catch {
         // Treat an unreadable serialized entry as a cache miss so the caller
         // can rebuild it through the established decode/build path.
-        return { cacheHit: false, telemetry: lookup.telemetry, timings: { ...baseTimings, serializedPayloadBytes: payload.byteLength, cacheTransferMode: 'arraybuffer-transfer' } };
+        return { cacheHit: false, telemetry: lookup.telemetry, timings: { ...baseTimings, compressedPayloadBytes: payload.byteLength, cacheCompression: lookup.payloadEncoding === 'gzip' ? 'gzip' : 'none', cacheTransferMode: 'arraybuffer-transfer' } };
       }
     }
     return {
