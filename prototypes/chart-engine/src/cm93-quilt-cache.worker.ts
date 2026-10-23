@@ -4,6 +4,7 @@ import type { Cm93ScaleCode } from './cm93-quilt.ts';
 type CacheEntry = {
   key: string;
   value: unknown;
+  payloadEncoding?: 'gzip' | 'json';
   savedAt: number;
   lastAccessedAt: number;
   sizeBytes: number;
@@ -14,7 +15,7 @@ type RequestMessage =
   | { id: number; type: 'clear' };
 
 const DB_NAME = 'azimute-one-cm93-cache';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 const STORE_NAME = 'quilt-results';
 const ACCESS_STORE_NAME = 'quilt-access';
 const CACHE_BUDGET_BYTES = 250 * 1024 * 1024;
@@ -32,7 +33,7 @@ type CacheTelemetry = {
   budgetBytes: number;
 };
 
-type CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number; serializedPayloadBytes?: number; serializeMs?: number };
+type CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number; serializedPayloadBytes?: number; compressedPayloadBytes?: number; serializeMs?: number; compressMs?: number; cacheCompression?: 'gzip' | 'none' };
 
 const counters = { hits: 0, misses: 0, readErrors: 0, writes: 0, writeErrors: 0, evictions: 0, skippedOversized: 0 };
 let lastTelemetry: CacheTelemetry | null = null;
@@ -143,7 +144,17 @@ async function readEntry(key: string): Promise<unknown | null> {
       const transaction = database.transaction(STORE_NAME, 'readonly');
       const request = transaction.objectStore(STORE_NAME).get(key) as IDBRequest<CacheEntry | undefined>;
       let cachedValue: unknown | null = null;
-      request.onsuccess = () => { cachedValue = request.result?.value ?? null; cachedSizeBytes = request.result?.sizeBytes ?? 0; };
+      request.onsuccess = () => {
+        const entry = request.result;
+        cachedValue = entry?.value ?? null;
+        cachedSizeBytes = entry?.sizeBytes ?? 0;
+        if (cachedValue instanceof ArrayBuffer) {
+          cachedValue = {
+            __cm93SerializedPayload: cachedValue,
+            payloadEncoding: entry?.payloadEncoding ?? 'json',
+          };
+        }
+      };
       transaction.oncomplete = () => resolve(cachedValue);
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not read the CM93 browser cache.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('CM93 cache read was aborted.'));
@@ -161,9 +172,9 @@ async function readEntry(key: string): Promise<unknown | null> {
   }
 }
 
-async function writeEntry(key: string, value: unknown): Promise<{ written: boolean; serializedPayloadBytes: number; serializeMs: number }> {
-  // Persist a compact byte payload so cache hits can transfer ownership of the
-  // buffer to the UI thread instead of structured-cloning thousands of objects.
+async function writeEntry(key: string, value: unknown): Promise<{ written: boolean; serializedPayloadBytes: number; compressedPayloadBytes: number; serializeMs: number; compressMs: number; payloadEncoding: 'gzip' | 'json' }> {
+  // Serialize once, then gzip when supported and when it meaningfully reduces
+  // storage/transfer size. Older plain-JSON entries remain readable.
   const serializeStartedAt = performance.now();
   const serialized = new TextEncoder().encode(JSON.stringify(value) ?? 'null');
   const serializeMs = performance.now() - serializeStartedAt;
@@ -171,15 +182,35 @@ async function writeEntry(key: string, value: unknown): Promise<{ written: boole
     serialized.byteOffset,
     serialized.byteOffset + serialized.byteLength,
   ) as ArrayBuffer;
-  const sizeBytes = serializedBuffer.byteLength;
-  if (sizeBytes > CACHE_BUDGET_BYTES) { counters.skippedOversized++; return { written: false, serializedPayloadBytes: sizeBytes, serializeMs }; }
+  let payloadBuffer = serializedBuffer;
+  let payloadEncoding: 'gzip' | 'json' = 'json';
+  const compressStartedAt = performance.now();
+  if (typeof CompressionStream !== 'undefined') {
+    try {
+      const stream = new Blob([serializedBuffer]).stream().pipeThrough(new CompressionStream('gzip'));
+      const compressed = await new Response(stream).arrayBuffer();
+      // Avoid spending decompression CPU on a payload that barely shrinks.
+      if (compressed.byteLength < serializedBuffer.byteLength * 0.95) {
+        payloadBuffer = compressed;
+        payloadEncoding = 'gzip';
+      }
+    } catch {
+      // Compression is an optimization only; persist the uncompressed payload.
+    }
+  }
+  const compressMs = performance.now() - compressStartedAt;
+  const sizeBytes = payloadBuffer.byteLength;
+  if (sizeBytes > CACHE_BUDGET_BYTES) {
+    counters.skippedOversized++;
+    return { written: false, serializedPayloadBytes: serializedBuffer.byteLength, compressedPayloadBytes: sizeBytes, serializeMs, compressMs, payloadEncoding };
+  }
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction([STORE_NAME, ACCESS_STORE_NAME], 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
       const now = Date.now();
-      store.put({ key, value: serializedBuffer, savedAt: now, lastAccessedAt: now, sizeBytes } satisfies CacheEntry);
+      store.put({ key, value: payloadBuffer, payloadEncoding, savedAt: now, lastAccessedAt: now, sizeBytes } satisfies CacheEntry);
       const accessStore = transaction.objectStore(ACCESS_STORE_NAME);
       accessStore.put({ key, lastAccessedAt: now });
       const entriesRequest = store.getAll() as IDBRequest<CacheEntry[]>;
@@ -212,7 +243,7 @@ async function writeEntry(key: string, value: unknown): Promise<{ written: boole
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not persist the CM93 quilt cache.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('CM93 quilt cache write was aborted.'));
     });
-    return { written: true, serializedPayloadBytes: sizeBytes, serializeMs };
+    return { written: true, serializedPayloadBytes: serializedBuffer.byteLength, compressedPayloadBytes: sizeBytes, serializeMs, compressMs, payloadEncoding };
   } finally {
     database.close();
   }
@@ -315,9 +346,13 @@ async function lookup(request: Extract<RequestMessage, { type: 'lookup' }>) {
     } else if (!lastTelemetry) {
       refreshTelemetry();
     }
-    const payload = cached instanceof ArrayBuffer
-      ? { serializedPayload: cached }
-      : { value: cached }; // Compatibility with entries created before the byte-payload format.
+    const cachedPayload = cached && typeof cached === 'object'
+      ? cached as { __cm93SerializedPayload?: unknown; payloadEncoding?: 'gzip' | 'json' }
+      : null;
+    const serializedPayload = cachedPayload?.__cm93SerializedPayload;
+    const payload = serializedPayload instanceof ArrayBuffer
+      ? { serializedPayload, payloadEncoding: cachedPayload?.payloadEncoding ?? 'json' }
+      : { value: cached }; // Compatibility with legacy object entries.
     return { cacheHit: true, ...payload, timings: { indexedDbReadMs, workerProcessingMs: performance.now() - workerStartedAt }, telemetry: lastTelemetry ? { ...lastTelemetry, ...counters } : undefined };
   }
 
@@ -331,12 +366,18 @@ async function build(request: Extract<RequestMessage, { type: 'build' }>) {
   const geometryBuildMs = performance.now() - buildStartedAt;
   const persistStartedAt = performance.now();
   let serializedPayloadBytes: number | undefined;
+  let compressedPayloadBytes: number | undefined;
   let serializeMs: number | undefined;
+  let compressMs: number | undefined;
+  let cacheCompression: 'gzip' | 'none' = 'none';
   try {
     const writeResult = await writeEntry(request.key, value);
     if (writeResult.written) counters.writes++;
     serializedPayloadBytes = writeResult.serializedPayloadBytes;
+    compressedPayloadBytes = writeResult.compressedPayloadBytes;
     serializeMs = writeResult.serializeMs;
+    compressMs = writeResult.compressMs;
+    cacheCompression = writeResult.payloadEncoding === 'gzip' ? 'gzip' : 'none';
   } catch {
     counters.writeErrors++;
   }
@@ -344,7 +385,7 @@ async function build(request: Extract<RequestMessage, { type: 'build' }>) {
   let telemetry: CacheTelemetry | undefined;
   const telemetryStartedAt = performance.now();
   try { telemetry = await getTelemetry(); } catch { /* Stats are diagnostic only. */ }
-  return { value, cacheHit: false, telemetry, timings: { geometryBuildMs, persistMs, telemetryMs: performance.now() - telemetryStartedAt, serializedPayloadBytes, serializeMs } };
+  return { value, cacheHit: false, telemetry, timings: { geometryBuildMs, persistMs, telemetryMs: performance.now() - telemetryStartedAt, serializedPayloadBytes, compressedPayloadBytes, serializeMs, compressMs, cacheCompression } };
 }
 
 const workerScope = self as unknown as {
