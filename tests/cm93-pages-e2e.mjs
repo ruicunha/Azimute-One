@@ -134,33 +134,49 @@ try {
   result.zoomTransitions.push(await captureDiagnostics('overview-before-zoom'));
   const overviewZoom = result.zoomTransitions[0].viewport?.zoom;
 
-  // Hover the canvas itself so the wheel gesture is delivered to MapLibre,
-  // rather than to a page overlay or the document. Split the gesture into
-  // smaller increments to avoid browser/CI wheel-event coalescing.
-  await mapCanvas.hover({ position: { x: canvasBounds.width / 2, y: canvasBounds.height / 2 } });
-  for (let i = 0; i < 6; i += 1) {
-    await page.mouse.wheel(0, -180);
-    await page.waitForTimeout(150);
-  }
-  await page.waitForTimeout(1500);
+  // captureDiagnostics clicks a sidebar button, moving the mouse away from
+  // the map. Re-hover before EVERY wheel sequence; otherwise later wheel events
+  // are delivered to the sidebar and the test silently captures stale metrics.
+  // Use enough increments to reach a meaningful close-up rather than another
+  // world/continent overview, while avoiding browser wheel-event coalescing.
+  const hoverMap = async () => {
+    await mapCanvas.hover({ position: { x: canvasBounds.width / 2, y: canvasBounds.height / 2 } });
+  };
+  const wheelZoom = async (deltaY, count) => {
+    await hoverMap();
+    for (let i = 0; i < count; i += 1) {
+      await page.mouse.wheel(0, deltaY);
+      await page.waitForTimeout(150);
+    }
+    await page.waitForTimeout(1500);
+  };
+  await wheelZoom(-180, 18);
   const closeupFirst = await captureDiagnostics('closeup-first-pass');
-  if (closeupFirst.viewport?.zoom === overviewZoom) {
-    throw new Error(`Zoom-transition benchmark did not change map zoom (still ${overviewZoom}).`);
+  if ((closeupFirst.viewport?.zoom ?? overviewZoom) < overviewZoom + 3) {
+    throw new Error(`Zoom-transition benchmark did not reach close-up scale: overview ${overviewZoom}, close-up ${closeupFirst.viewport?.zoom}.`);
   }
   result.zoomTransitions.push(closeupFirst);
-  // Return to the same overview and repeat the same zoom gesture. This helps
-  // distinguish cold viewport work from reuse of the same processed cell quilt.
-  for (let i = 0; i < 6; i += 1) {
-    await page.mouse.wheel(0, 180);
-    await page.waitForTimeout(150);
+
+  // Return to the original overview, capture it to prove that the map really
+  // moved, then revisit the exact same close-up viewport. This tests cache
+  // reuse instead of merely copying the last successful report twice.
+  await wheelZoom(180, 18);
+  const overviewRepeat = await captureDiagnostics('overview-before-repeat');
+  if (Math.abs((overviewRepeat.viewport?.zoom ?? Number.NaN) - overviewZoom) > 0.35) {
+    throw new Error(`Zoom-transition benchmark did not return to overview: expected ${overviewZoom}, got ${overviewRepeat.viewport?.zoom}.`);
   }
-  await page.waitForTimeout(1200);
-  for (let i = 0; i < 6; i += 1) {
-    await page.mouse.wheel(0, -180);
-    await page.waitForTimeout(150);
-  }
-  await page.waitForTimeout(1500);
+  result.zoomTransitions.push(overviewRepeat);
+  await wheelZoom(-180, 18);
   const closeupRepeat = await captureDiagnostics('closeup-repeat-pass');
+  if (Math.abs((closeupRepeat.viewport?.zoom ?? Number.NaN) - (closeupFirst.viewport?.zoom ?? Number.NaN)) > 0.35) {
+    throw new Error(`Repeated close-up viewport differs from first pass: ${closeupFirst.viewport?.zoom} vs ${closeupRepeat.viewport?.zoom}.`);
+  }
+  if (JSON.stringify(closeupFirst.performance) === JSON.stringify(closeupRepeat.performance)) {
+    throw new Error('Repeated close-up diagnostics are byte-for-byte identical; the test may be reading stale quilt metrics.');
+  }
+  if (closeupRepeat.performance?.quiltCacheHit !== true) {
+    throw new Error(`Repeated close-up did not reuse the processed quilt (cache source: ${closeupRepeat.performance?.quiltCacheSource ?? 'unknown'}).`);
+  }
   result.zoomTransitions.push(closeupRepeat);
   result.checks.zoomTransitionBenchmark = true;
   result.zoomTransitionComparison = {
