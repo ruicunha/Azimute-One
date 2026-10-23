@@ -286,16 +286,25 @@ async function lookup(request: Extract<RequestMessage, { type: 'lookup' }>) {
     counters.hits++;
     // Do not block a cache hit on telemetry. getAll() materializes every large
     // stored GeoJSON value, so the inventory scan runs after the render reply.
-    // Enforce the configured limit without blocking the render reply. The size
-    // index and access records avoid loading cached GeoJSON payloads to evict.
-    void enforceCacheBudget().then((didEvict) => didEvict ? getTelemetry() : null).then((telemetry) => {
-      if (telemetry) workerScope.postMessage({ type: 'telemetry', telemetry });
-    }).catch(() => { /* Budget maintenance and statistics must not break rendering. */ });
-    if (!lastTelemetry) {
-      const telemetryStartedAt = performance.now();
+    // Only open a write transaction when the last metadata-only inventory says
+    // the budget is exceeded. The first inventory is also metadata-only and runs
+    // in the background, so a cache hit never waits for maintenance.
+    const refreshTelemetry = () => {
       void getTelemetry().then((telemetry) => {
-        workerScope.postMessage({ type: 'telemetry', telemetry, timings: { telemetryMs: performance.now() - telemetryStartedAt } });
-      }).catch(() => { /* Statistics are diagnostic only. */ });
+        if (telemetry.estimatedBytes > CACHE_BUDGET_BYTES) {
+          return enforceCacheBudget().then((didEvict) => didEvict ? getTelemetry() : telemetry);
+        }
+        return telemetry;
+      }).then((telemetry) => {
+        workerScope.postMessage({ type: 'telemetry', telemetry });
+      }).catch(() => { /* Budget maintenance and statistics must not break rendering. */ });
+    };
+    if (lastTelemetry && lastTelemetry.estimatedBytes > CACHE_BUDGET_BYTES) {
+      void enforceCacheBudget().then((didEvict) => didEvict ? getTelemetry() : null).then((telemetry) => {
+        if (telemetry) workerScope.postMessage({ type: 'telemetry', telemetry });
+      }).catch(() => { /* Budget maintenance and statistics must not break rendering. */ });
+    } else if (!lastTelemetry) {
+      refreshTelemetry();
     }
     return { cacheHit: true, value: cached, timings: { indexedDbReadMs, workerProcessingMs: performance.now() - workerStartedAt }, telemetry: lastTelemetry ? { ...lastTelemetry, ...counters } : undefined };
   }
