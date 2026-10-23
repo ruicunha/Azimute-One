@@ -97,6 +97,18 @@ try {
     .filter((line) => /Persistent quilt cache:|Cache stages \(ms\):|Last update timings:|Cache hits \/ misses:/.test(line));
   await page.screenshot({ path: path.join(outputDir, 'persistent-cache-hit.png'), fullPage: true });
 
+  // Capture a structured report for the persistent-cache reload itself. The
+  // body-text summary above is useful for humans, but the JSON timings let us
+  // compare compression/decompression cost across cache-format experiments.
+  await page.evaluate(() => { window.__azimuteClipboardText = ''; });
+  await page.getByRole('button', { name: 'Copy performance diagnostics (JSON)' }).click();
+  await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 15000 });
+  result.persistentCacheReloadDiagnostics = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
+  await fs.writeFile(
+    path.join(outputDir, 'persistent-cache-reload.json'),
+    JSON.stringify(result.persistentCacheReloadDiagnostics, null, 2),
+  );
+
   // Benchmark real zoom transitions on the deployed map. Capture the structured
   // diagnostics from the app clipboard so every sample includes viewport zoom,
   // cell mix, cache source, worker/geometry stages and MapLibre lifecycle timings.
