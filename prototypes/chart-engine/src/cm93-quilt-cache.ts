@@ -1,7 +1,7 @@
 import type { Cm93PolygonClippingEngine } from './cm93-quilt-geometry.ts';
 import type { Cm93ScaleCode } from './cm93-quilt.ts';
 
-export type Cm93CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; workerRoundTripMs?: number; workerOverheadMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number };
+export type Cm93CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; workerRoundTripMs?: number; workerOverheadMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number; serializedPayloadBytes?: number; deserializeMs?: number; cacheTransferMode?: 'arraybuffer-transfer' | 'structured-clone' };
 
 export type Cm93CacheTelemetry = {
   hits: number;
@@ -82,11 +82,37 @@ export async function lookupCm93CachedQuilt<T>(
   try {
     const lookupStartedAt = performance.now();
     const lookup = await sendRequest(activeWorker, { type: 'lookup', key }) as
-      | { value: T; cacheHit: true; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings }
+      | { value?: T; serializedPayload?: ArrayBuffer; cacheHit: true; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings }
       | { cacheHit: false; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings };
     const workerRoundTripMs = performance.now() - lookupStartedAt;
     const workerProcessingMs = lookup.timings?.workerProcessingMs;
-    return { ...lookup, timings: { ...lookup.timings, workerRoundTripMs, workerOverheadMs: workerProcessingMs === undefined ? undefined : Math.max(0, workerRoundTripMs - workerProcessingMs) } };
+    const baseTimings = { ...lookup.timings, workerRoundTripMs, workerOverheadMs: workerProcessingMs === undefined ? undefined : Math.max(0, workerRoundTripMs - workerProcessingMs) };
+    if (lookup.cacheHit && lookup.serializedPayload instanceof ArrayBuffer) {
+      const payload = lookup.serializedPayload;
+      const deserializeStartedAt = performance.now();
+      try {
+        const value = JSON.parse(new TextDecoder().decode(payload)) as T;
+        return {
+          cacheHit: true,
+          value,
+          telemetry: lookup.telemetry,
+          timings: {
+            ...baseTimings,
+            serializedPayloadBytes: payload.byteLength,
+            deserializeMs: performance.now() - deserializeStartedAt,
+            cacheTransferMode: 'arraybuffer-transfer',
+          },
+        };
+      } catch {
+        // Treat an unreadable serialized entry as a cache miss so the caller
+        // can rebuild it through the established decode/build path.
+        return { cacheHit: false, telemetry: lookup.telemetry, timings: { ...baseTimings, serializedPayloadBytes: payload.byteLength, cacheTransferMode: 'arraybuffer-transfer' } };
+      }
+    }
+    return {
+      ...lookup,
+      timings: { ...baseTimings, cacheTransferMode: lookup.cacheHit ? 'structured-clone' : undefined },
+    };
   } catch {
     // Worker/cache failures fall back to the original CPU processing path.
     return null;
