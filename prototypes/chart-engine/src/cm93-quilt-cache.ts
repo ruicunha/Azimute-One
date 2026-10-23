@@ -1,7 +1,7 @@
 import type { Cm93PolygonClippingEngine } from './cm93-quilt-geometry.ts';
 import type { Cm93ScaleCode } from './cm93-quilt.ts';
 
-export type Cm93CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; workerRoundTripMs?: number; workerOverheadMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number; serializedPayloadBytes?: number; deserializeMs?: number; cacheTransferMode?: 'arraybuffer-transfer' | 'structured-clone' };
+export type Cm93CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; workerRoundTripMs?: number; workerOverheadMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number; serializedPayloadBytes?: number; serializeMs?: number; deserializeMs?: number; cacheTransferMode?: 'arraybuffer-transfer' | 'structured-clone' };
 
 export type Cm93CacheTelemetry = {
   hits: number;
@@ -82,7 +82,7 @@ export async function lookupCm93CachedQuilt<T>(
   try {
     const lookupStartedAt = performance.now();
     const lookup = await sendRequest(activeWorker, { type: 'lookup', key }) as
-      | { value?: T; serializedPayload?: ArrayBuffer; cacheHit: true; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings }
+      | { value: T; serializedPayload?: ArrayBuffer; cacheHit: true; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings }
       | { cacheHit: false; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings };
     const workerRoundTripMs = performance.now() - lookupStartedAt;
     const workerProcessingMs = lookup.timings?.workerProcessingMs;
