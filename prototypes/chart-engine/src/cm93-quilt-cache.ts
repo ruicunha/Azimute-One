@@ -71,7 +71,11 @@ function sendRequest(activeWorker: Worker, message: Omit<WorkerRequest, 'id'>): 
 
 export async function lookupCm93CachedQuilt<T>(
   key: string,
-): Promise<{ value?: T; cacheHit: boolean; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings } | null> {
+): Promise<
+  | { value: T; cacheHit: true; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings }
+  | { cacheHit: false; telemetry?: Cm93CacheTelemetry; timings?: Cm93CacheTimings }
+  | null
+> {
   const activeWorker = getWorker();
   if (!activeWorker) return null;
 
