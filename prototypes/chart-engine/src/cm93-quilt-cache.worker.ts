@@ -135,6 +135,7 @@ function openDatabase(): Promise<IDBDatabase> {
 async function readEntry(key: string): Promise<unknown | null> {
   const database = await openDatabase();
   try {
+    let cachedSizeBytes = 0;
     const value = await new Promise<unknown | null>((resolve, reject) => {
       // Cache entries contain large GeoJSON payloads. Keep the payload store
       // read-only on hits; writing the entry back just to update its access
@@ -142,7 +143,6 @@ async function readEntry(key: string): Promise<unknown | null> {
       const transaction = database.transaction(STORE_NAME, 'readonly');
       const request = transaction.objectStore(STORE_NAME).get(key) as IDBRequest<CacheEntry | undefined>;
       let cachedValue: unknown | null = null;
-      let cachedSizeBytes = 0;
       request.onsuccess = () => { cachedValue = request.result?.value ?? null; cachedSizeBytes = request.result?.sizeBytes ?? 0; };
       transaction.oncomplete = () => resolve(cachedValue);
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not read the CM93 browser cache.'));
@@ -284,8 +284,8 @@ async function lookup(request: Extract<RequestMessage, { type: 'lookup' }>) {
   const indexedDbReadMs = performance.now() - readStartedAt;
   if (cached) {
     counters.hits++;
-    // Do not block a cache hit on telemetry. getAll() materializes every large
-    // stored GeoJSON value, so the inventory scan runs after the render reply.
+    // Do not block a cache hit on telemetry or budget maintenance. The inventory
+    // uses key-only cursors and lightweight access metadata, not GeoJSON payloads.
     // Only open a write transaction when the last metadata-only inventory says
     // the budget is exceeded. The first inventory is also metadata-only and runs
     // in the background, so a cache hit never waits for maintenance.
