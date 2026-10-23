@@ -21,6 +21,22 @@ const result = {
 
 try {
   const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1600, height: 1000 } });
+  // Stub clipboard I/O inside this isolated browser context. This makes the
+  // diagnostics capture deterministic in headless CI without relying on OS
+  // clipboard permissions; it does not modify the deployed application.
+  await context.addInitScript(() => {
+    let clipboardText = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text) => {
+          clipboardText = text;
+          window.__azimuteClipboardText = text;
+        },
+        readText: async () => clipboardText,
+      },
+    });
+  });
   const page = await context.newPage();
   page.on('pageerror', (error) => errors.push(String(error)));
   page.on('console', (message) => {
@@ -83,12 +99,11 @@ try {
   // Benchmark real zoom transitions on the deployed map. Capture the structured
   // diagnostics from the app clipboard so every sample includes viewport zoom,
   // cell mix, cache source, worker/geometry stages and MapLibre lifecycle timings.
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   const diagnosticsButton = page.getByRole('button', { name: 'Copy performance diagnostics (JSON)' });
   const captureDiagnostics = async (label) => {
     await diagnosticsButton.click();
     await page.getByText('CM93 performance diagnostics copied.', { exact: true }).waitFor({ timeout: 10000 });
-    const report = JSON.parse(await page.evaluate(() => navigator.clipboard.readText()));
+    const report = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
     const sample = {
       label,
       capturedAt: report.capturedAt,
