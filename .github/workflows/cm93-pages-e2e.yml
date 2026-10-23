@@ -1,0 +1,64 @@
+name: CM93 deployed Pages end-to-end validation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/cm93-pages-e2e.yml'
+      - 'tests/cm93-pages-e2e.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cm93-pages-e2e
+  cancel-in-progress: false
+
+jobs:
+  validate-deployed-pages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout test harness
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install browser test runtime
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Download and extract CM93 sample dataset
+        run: |
+          mkdir -p /tmp/cm93-sample
+          curl --fail --location --retry 3 --retry-delay 2 \
+            https://charts.sailingamazinggrace.com/CM93/cm93_200705_Small.zip \
+            --output /tmp/cm93-sample.zip
+          unzip -t /tmp/cm93-sample.zip
+          unzip -q /tmp/cm93-sample.zip -d /tmp/cm93-sample
+          DATASET_DIR="$(dirname "$(find /tmp/cm93-sample -type f -iname CM93OBJ.DIC -print -quit)")"
+          test -n "$DATASET_DIR"
+          test -f "$DATASET_DIR/CM93ATTR.DIC"
+          echo "CM93_DATASET_DIR=$DATASET_DIR" >> "$GITHUB_ENV"
+          echo "Dataset root: $DATASET_DIR"
+          du -sh "$DATASET_DIR"
+
+      - name: Test deployed GitHub Pages with Chromium
+        env:
+          CM93_DATASET_DIR: ${{ env.CM93_DATASET_DIR }}
+          AZIMUTE_PAGES_URL: https://ruicunha.github.io/Azimute-One/
+        run: node tests/cm93-pages-e2e.mjs
+
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cm93-pages-e2e-diagnostics
+          path: |
+            artifacts/cm93-pages-e2e/
+          if-no-files-found: warn
+          retention-days: 14
