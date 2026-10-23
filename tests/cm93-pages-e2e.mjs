@@ -59,7 +59,7 @@ try {
     throw new Error('CM93 overview rendered but viewport quilt diagnostics were not produced; cache-path validation is incomplete.');
   }
   result.firstRunCacheDiagnostics = result.performanceDiagnosticsText
-    .split('\\n')
+    .split(/\\r?\\n/)
     .filter((line) => /Persistent quilt cache:|Cache stages \(ms\):|Last update timings:|Cache hits \/ misses:/.test(line));
 
   // Reload without closing the browser context: IndexedDB must survive the
@@ -76,7 +76,7 @@ try {
   result.checks.indexedDbCacheHitAfterReload = true;
   result.secondRunPerformanceDiagnosticsText = await page.locator('body').innerText();
   result.secondRunCacheDiagnostics = result.secondRunPerformanceDiagnosticsText
-    .split('\\n')
+    .split(/\\r?\\n/)
     .filter((line) => /Persistent quilt cache:|Cache stages \(ms\):|Last update timings:|Cache hits \/ misses:/.test(line));
   await page.screenshot({ path: path.join(outputDir, 'persistent-cache-hit.png'), fullPage: true });
 
