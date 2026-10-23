@@ -14,8 +14,9 @@ type RequestMessage =
   | { id: number; type: 'clear' };
 
 const DB_NAME = 'azimute-one-cm93-cache';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_NAME = 'quilt-results';
+const ACCESS_STORE_NAME = 'quilt-access';
 const CACHE_BUDGET_BYTES = 250 * 1024 * 1024;
 
 type CacheTelemetry = {
@@ -72,6 +73,9 @@ function openDatabase(): Promise<IDBDatabase> {
       if (!database.objectStoreNames.contains(STORE_NAME)) {
         database.createObjectStore(STORE_NAME, { keyPath: 'key' });
       }
+      if (!database.objectStoreNames.contains(ACCESS_STORE_NAME)) {
+        database.createObjectStore(ACCESS_STORE_NAME, { keyPath: 'key' });
+      }
       if ((event as IDBVersionChangeEvent).oldVersion < 2 && transaction) {
         const store = transaction.objectStore(STORE_NAME);
         const cursorRequest = store.openCursor();
@@ -98,25 +102,28 @@ function openDatabase(): Promise<IDBDatabase> {
 async function readEntry(key: string): Promise<unknown | null> {
   const database = await openDatabase();
   try {
-    return await new Promise((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, 'readwrite');
-      const store = transaction.objectStore(STORE_NAME);
-      const request = store.get(key) as IDBRequest<CacheEntry | undefined>;
-      let value: unknown | null = null;
-      request.onsuccess = () => {
-        const entry = request.result;
-        if (!entry) return;
-        value = entry.value ?? null;
-        store.put({
-          ...entry,
-          sizeBytes: typeof entry.sizeBytes === 'number' ? entry.sizeBytes : estimateSizeBytes(entry.value),
-          lastAccessedAt: Date.now(),
-        } satisfies CacheEntry);
-      };
-      transaction.oncomplete = () => resolve(value);
+    const value = await new Promise<unknown | null>((resolve, reject) => {
+      // Cache entries contain large GeoJSON payloads. Keep the payload store
+      // read-only on hits; writing the entry back just to update its access
+      // timestamp causes another structured clone and a large IndexedDB write.
+      const transaction = database.transaction(STORE_NAME, 'readonly');
+      const request = transaction.objectStore(STORE_NAME).get(key) as IDBRequest<CacheEntry | undefined>;
+      let cachedValue: unknown | null = null;
+      request.onsuccess = () => { cachedValue = request.result?.value ?? null; };
+      transaction.oncomplete = () => resolve(cachedValue);
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not read the CM93 browser cache.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('CM93 cache read was aborted.'));
     });
+
+    if (value !== null) {
+      // Keep LRU metadata in a small, separate record so cache hits never
+      // rewrite the multi-megabyte GeoJSON payload. Do not wait for this
+      // best-effort timestamp update before returning the cached value.
+      const transaction = database.transaction(ACCESS_STORE_NAME, 'readwrite');
+      transaction.objectStore(ACCESS_STORE_NAME).put({ key, lastAccessedAt: Date.now() });
+      transaction.onerror = () => { /* Access metadata is diagnostic/eviction metadata only. */ };
+    }
+    return value;
   } finally {
     database.close();
   }
@@ -132,22 +139,34 @@ async function writeEntry(key: string, value: unknown): Promise<boolean> {
       const store = transaction.objectStore(STORE_NAME);
       const now = Date.now();
       store.put({ key, value, savedAt: now, lastAccessedAt: now, sizeBytes } satisfies CacheEntry);
+      const accessStore = transaction.objectStore(ACCESS_STORE_NAME);
+      accessStore.put({ key, lastAccessedAt: now });
       const entriesRequest = store.getAll() as IDBRequest<CacheEntry[]>;
-      entriesRequest.onsuccess = () => {
-        const entries = entriesRequest.result;
+      const accessRequest = accessStore.getAll() as IDBRequest<Array<{ key: string; lastAccessedAt: number }>>;
+      let entries: CacheEntry[] | null = null;
+      let accessEntries: Array<{ key: string; lastAccessedAt: number }> | null = null;
+      const evictIfReady = () => {
+        if (!entries || !accessEntries) return;
+        const lastAccessedByKey = new Map(accessEntries.map((entry) => [entry.key, entry.lastAccessedAt]));
         let totalBytes = entries.reduce((total, entry) =>
           total + (typeof entry.sizeBytes === 'number' ? entry.sizeBytes : estimateSizeBytes(entry.value)), 0);
         const oldestFirst = entries
           .filter((entry) => entry.key !== key)
-          .sort((a, b) => (a.lastAccessedAt ?? a.savedAt ?? 0) - (b.lastAccessedAt ?? b.savedAt ?? 0));
+          .sort((a, b) =>
+            (lastAccessedByKey.get(a.key) ?? a.lastAccessedAt ?? a.savedAt ?? 0) -
+            (lastAccessedByKey.get(b.key) ?? b.lastAccessedAt ?? b.savedAt ?? 0));
         for (const entry of oldestFirst) {
           if (totalBytes <= CACHE_BUDGET_BYTES) break;
           store.delete(entry.key);
+          accessStore.delete(entry.key);
           counters.evictions++;
           totalBytes -= typeof entry.sizeBytes === 'number' ? entry.sizeBytes : estimateSizeBytes(entry.value);
         }
       };
+      entriesRequest.onsuccess = () => { entries = entriesRequest.result; evictIfReady(); };
+      accessRequest.onsuccess = () => { accessEntries = accessRequest.result; evictIfReady(); };
       entriesRequest.onerror = () => reject(entriesRequest.error ?? new Error('Could not inspect CM93 cache size.'));
+      accessRequest.onerror = () => reject(accessRequest.error ?? new Error('Could not inspect CM93 access metadata.'));
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not persist the CM93 quilt cache.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('CM93 quilt cache write was aborted.'));
@@ -218,6 +237,7 @@ workerScope.addEventListener('message', (event: MessageEvent<RequestMessage>) =>
           await new Promise<void>((resolve, reject) => {
             const transaction = database.transaction(STORE_NAME, 'readwrite');
             transaction.objectStore(STORE_NAME).clear();
+            transaction.objectStore(ACCESS_STORE_NAME).clear();
             transaction.oncomplete = () => resolve();
             transaction.onerror = () => reject(transaction.error);
           });
