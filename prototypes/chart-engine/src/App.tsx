@@ -1361,6 +1361,17 @@ export default function App() {
           {cm93AutoEnabled && cm93QuiltStats && <div className="legend">
             <span className="field-label">AUTOMATIC CM93 VIEWPORT QUILT</span>
             <div className="cache-telemetry">
+              <span className="field-label">RENDER LAYER ISOLATION (DIAGNOSTIC)</span>
+              <p>Temporarily hide one portrayal category at a time to identify what contributes to MapLibre settling time. These switches only change layer visibility; they do not rebuild the quilt or change cached data. Restore all categories before normal navigation.</p>
+              <ul>
+                <li><label><input type="checkbox" checked={cm93RenderLayerVisibility.fills} onChange={() => setCm93RenderLayerVisibility((current) => ({ ...current, fills: !current.fills }))} /> Area fills</label></li>
+                <li><label><input type="checkbox" checked={cm93RenderLayerVisibility.lines} onChange={() => setCm93RenderLayerVisibility((current) => ({ ...current, lines: !current.lines }))} /> Lines (coastlines, contours, structures)</label></li>
+                <li><label><input type="checkbox" checked={cm93RenderLayerVisibility.symbols} onChange={() => setCm93RenderLayerVisibility((current) => ({ ...current, symbols: !current.symbols }))} /> Navigational symbols</label></li>
+                <li><label><input type="checkbox" checked={cm93RenderLayerVisibility.labels} onChange={() => setCm93RenderLayerVisibility((current) => ({ ...current, labels: !current.labels }))} /> Feature labels</label></li>
+                <li><label><input type="checkbox" checked={cm93RenderLayerVisibility.depthLabels} onChange={() => setCm93RenderLayerVisibility((current) => ({ ...current, depthLabels: !current.depthLabels }))} /> Depth contour labels</label></li>
+              </ul>
+            </div>
+            <div className="cache-telemetry">
               <span className="field-label">PERSISTENT QUILT CACHE STATISTICS</span>
               {cm93CacheTelemetry ? <ul>
                 <li>Cache hits / misses: {cm93CacheTelemetry.hits.toLocaleString()} / {cm93CacheTelemetry.misses.toLocaleString()}</li>
