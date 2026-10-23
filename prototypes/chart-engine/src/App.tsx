@@ -259,7 +259,7 @@ export default function App() {
   const [cm93PointClassCounts, setCm93PointClassCounts] = useState<Array<{ name: string; count: number }>>([]);
   const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
   const visibleCm93PointClassesRef = useRef<string[]>([]);
-  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number; mapRenderMs?: number; mapFirstRenderMs?: number }; cacheTimings?: Cm93CacheTimings & { geoJsonPreparationMs?: number }; geometryMetrics?: import('./cm93-quilt-geometry').Cm93CoverageQuiltMetrics; quiltCacheHit?: boolean; quiltCacheSource?: 'memory' | 'indexeddb' | 'built' } | null>(null);
+  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number; mapRenderMs?: number; mapFirstRenderMs?: number; sourceDataMs?: number; sourceLoadedMs?: number; renderToIdleMs?: number; renderEventsUntilIdle?: number; sourceDataEvents?: number }; cacheTimings?: Cm93CacheTimings & { geoJsonPreparationMs?: number }; geometryMetrics?: import('./cm93-quilt-geometry').Cm93CoverageQuiltMetrics; quiltCacheHit?: boolean; quiltCacheSource?: 'memory' | 'indexeddb' | 'built' } | null>(null);
   const [cm93CacheTelemetry, setCm93CacheTelemetry] = useState<Cm93CacheTelemetry | null>(null);
   useEffect(() => onCm93CacheTelemetry((telemetry, timings) => {
     setCm93CacheTelemetry(telemetry);
@@ -1054,26 +1054,82 @@ export default function App() {
       return;
     }
     cm93WebGpuBenchmarkScaleRef.current = selection.scale;
+    // Measure MapLibre's source-update lifecycle as well as render/idle events.
+    // These are event timings, not isolated CPU or GPU durations.
     const mapRenderStartedAt = performance.now();
-    // "render" is a first-frame proxy; "idle" remains the completion proxy.
-    // Neither is a pure GPU duration, but together they distinguish initial
-    // visual response from the time MapLibre needs to settle the full quilt.
-    map.once('render', () => {
+    let mapFirstRenderMs: number | undefined;
+    let sourceDataMs: number | undefined;
+    let sourceLoadedMs: number | undefined;
+    let renderEventCount = 0;
+    let sourceDataEventCount = 0;
+    let finished = false;
+    const updateRenderTimings = (mapRenderMs?: number) => {
       if (requestId !== cm93QuiltRequestRef.current) return;
-      const mapFirstRenderMs = performance.now() - mapRenderStartedAt;
       setCm93QuiltStats((current) => current ? {
         ...current,
-        timings: current.timings ? { ...current.timings, mapFirstRenderMs } : current.timings,
+        timings: current.timings ? {
+          ...current.timings,
+          ...(mapFirstRenderMs === undefined ? {} : { mapFirstRenderMs }),
+          ...(mapRenderMs === undefined ? {} : {
+            mapRenderMs,
+            renderToIdleMs: mapFirstRenderMs === undefined ? undefined : Math.max(0, mapRenderMs - mapFirstRenderMs),
+            renderEventsUntilIdle: renderEventCount,
+            sourceDataEvents: sourceDataEventCount,
+          }),
+          ...(sourceDataMs === undefined ? {} : { sourceDataMs }),
+          ...(sourceLoadedMs === undefined ? {} : { sourceLoadedMs }),
+        } : current.timings,
       } : current);
-    });
-    map.once('idle', () => {
-      if (requestId !== cm93QuiltRequestRef.current) return;
+    };
+    const cleanupRenderListeners = () => {
+      map.off('sourcedata', onSourceData);
+      map.off('render', onRender);
+      map.off('idle', onIdle);
+    };
+    const onSourceData = (event: { sourceId?: string; sourceDataType?: string; isSourceLoaded?: boolean }) => {
+      if (requestId !== cm93QuiltRequestRef.current) {
+        cleanupRenderListeners();
+        return;
+      }
+      if (event.sourceId !== 'cm93-quilt') return;
+      sourceDataEventCount++;
+      const elapsedMs = performance.now() - mapRenderStartedAt;
+      if (sourceDataMs === undefined && event.sourceDataType === 'content') {
+        sourceDataMs = elapsedMs;
+      }
+      if (sourceLoadedMs === undefined && event.isSourceLoaded && sourceDataMs !== undefined) {
+        sourceLoadedMs = elapsedMs;
+      }
+      updateRenderTimings();
+    };
+    const onRender = () => {
+      if (requestId !== cm93QuiltRequestRef.current) {
+        cleanupRenderListeners();
+        return;
+      }
+      renderEventCount++;
+      if (mapFirstRenderMs === undefined) {
+        mapFirstRenderMs = performance.now() - mapRenderStartedAt;
+        updateRenderTimings();
+      }
+    };
+    const onIdle = () => {
+      if (requestId !== cm93QuiltRequestRef.current) {
+        cleanupRenderListeners();
+        return;
+      }
+      // Ignore an already-pending idle event until this source has reported
+      // data for the current update.
+      if (sourceDataMs === undefined && sourceLoadedMs === undefined) return;
+      if (finished) return;
+      finished = true;
       const mapRenderMs = performance.now() - mapRenderStartedAt;
-      setCm93QuiltStats((current) => current ? {
-        ...current,
-        timings: current.timings ? { ...current.timings, mapRenderMs } : current.timings,
-      } : current);
-    });
+      updateRenderTimings(mapRenderMs);
+      cleanupRenderListeners();
+    };
+    map.on('sourcedata', onSourceData);
+    map.on('render', onRender);
+    map.on('idle', onIdle);
     const sourceStartedAt = performance.now();
     const data = { type: 'FeatureCollection', features: quiltFeatures } as never;
     const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
@@ -1323,6 +1379,7 @@ export default function App() {
               <li>Decoded-cell cache: {cm93QuiltStats.cached} cells</li>
               <li>Persistent quilt cache: {cm93QuiltStats.quiltCacheSource === 'memory' ? 'MEMORY HIT — reused in-memory processed geometry' : cm93QuiltStats.quiltCacheSource === 'indexeddb' ? 'INDEXEDDB HIT — reused persistent processed geometry' : 'MISS — processed this cell selection'}</li>
               {cm93QuiltStats.timings && <li>Last update timings: select {cm93QuiltStats.timings.selectMs.toFixed(1)} ms · decode {cm93QuiltStats.timings.decodeMs.toFixed(1)} ms · coverage/geometry {cm93QuiltStats.timings.quiltMs.toFixed(1)} ms · source update {cm93QuiltStats.timings.sourceMs.toFixed(1)} ms · total {cm93QuiltStats.timings.totalMs.toFixed(1)} ms</li>}
+              {cm93QuiltStats.timings && <li>MapLibre events (ms from source update): first render {cm93QuiltStats.timings.mapFirstRenderMs?.toFixed(1) ?? 'pending'} · source data {cm93QuiltStats.timings.sourceDataMs?.toFixed(1) ?? 'pending'} · source loaded {cm93QuiltStats.timings.sourceLoadedMs?.toFixed(1) ?? 'pending'} · idle {cm93QuiltStats.timings.mapRenderMs?.toFixed(1) ?? 'pending'} · first render → idle {cm93QuiltStats.timings.renderToIdleMs?.toFixed(1) ?? 'pending'} · render events {cm93QuiltStats.timings.renderEventsUntilIdle ?? 'pending'} · source data events {cm93QuiltStats.timings.sourceDataEvents ?? 'pending'}</li>}
               {cm93QuiltStats.cacheTimings && <li>Cache stages (ms): IndexedDB read {cm93QuiltStats.cacheTimings.indexedDbReadMs?.toFixed(1) ?? 'n/a'} · worker round-trip {cm93QuiltStats.cacheTimings.workerRoundTripMs?.toFixed(1) ?? 'n/a'} · GeoJSON preparation {cm93QuiltStats.cacheTimings.geoJsonPreparationMs?.toFixed(1) ?? 'n/a'} · background telemetry scan {cm93QuiltStats.cacheTimings.telemetryMs?.toFixed(1) ?? 'pending'} · cold geometry build {cm93QuiltStats.cacheTimings.geometryBuildMs?.toFixed(1) ?? 'n/a'} · persistence {cm93QuiltStats.cacheTimings.persistMs?.toFixed(1) ?? 'n/a'}</li>}
               {cm93QuiltStats.geometryMetrics && <li>Quilt stages (ms): coverage collect {cm93QuiltStats.geometryMetrics.collectCoverageMs.toFixed(1)} · coverage allocation/union/difference {cm93QuiltStats.geometryMetrics.coverageAllocationMs.toFixed(1)} · prepare coverage {cm93QuiltStats.geometryMetrics.prepareCoverageMs.toFixed(1)} · feature bounds {cm93QuiltStats.geometryMetrics.featureBoundsMs.toFixed(1)} · point clipping {cm93QuiltStats.geometryMetrics.pointClipMs.toFixed(1)} · line clipping {cm93QuiltStats.geometryMetrics.lineClipMs.toFixed(1)} · polygon clipping {cm93QuiltStats.geometryMetrics.polygonClipMs.toFixed(1)}</li>}
               {cm93QuiltStats.geometryMetrics && <li>Quilt work: {cm93QuiltStats.geometryMetrics.inputFeatureCount.toLocaleString()} input · {cm93QuiltStats.geometryMetrics.coverageFeatureCount} coverage · {cm93QuiltStats.geometryMetrics.boundsRejectedCount.toLocaleString()} bounds rejected · {cm93QuiltStats.geometryMetrics.coverageEdgeCount.toLocaleString()} coverage edges · {cm93QuiltStats.geometryMetrics.polygonCoverageCandidateCount.toLocaleString()} polygon coverage candidates / {cm93QuiltStats.geometryMetrics.polygonCoverageComponentCount.toLocaleString()} components · {cm93QuiltStats.geometryMetrics.outputFeatureCount.toLocaleString()} output features</li>}
@@ -1379,7 +1436,7 @@ export default function App() {
                   scales: cm93Summary.scales.map(({ code, fileCount }) => ({ code, fileCount })),
                 } : null,
                 lastMapClickDiagnostic: clickReport,
-                testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. quiltCacheHit and quiltCacheSource identify whether the latest update reused memory, IndexedDB, or rebuilt the quilt. On cache hits, geometryMetrics are from the original cached build and are not work repeated by this render. quiltMs includes cache retrieval and preparation of the returned GeoJSON for MapLibre. Include zoom-transition runs where detail appears late.',
+                testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. quiltCacheHit and quiltCacheSource identify whether the latest update reused memory, IndexedDB, or rebuilt the quilt. On cache hits, geometryMetrics are from the original cached build and are not work repeated by this render. quiltMs includes cache retrieval and preparation of the returned GeoJSON for MapLibre. MapLibre event timings are measured from source update: sourceDataMs is the first sourcedata event, sourceLoadedMs is the first sourcedata event reporting isSourceLoaded, mapFirstRenderMs is the first render event, and mapRenderMs is the idle event. These are lifecycle/event timings, not pure GPU durations. Include zoom-transition runs where detail appears late.',
               };
               void navigator.clipboard?.writeText(JSON.stringify(report, null, 2)).then(() => {
                 setMessage('CM93 performance diagnostics copied. Repeat for cold-cache and warm-cache runs.');
