@@ -176,7 +176,7 @@ async function writeEntry(key: string, value: unknown): Promise<{ written: boole
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const transaction = database.transaction([STORE_NAME, ACCESS_STORE_NAME], 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
       const now = Date.now();
       store.put({ key, value: serializedBuffer, savedAt: now, lastAccessedAt: now, sizeBytes } satisfies CacheEntry);
