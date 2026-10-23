@@ -21,6 +21,23 @@ const result = {
 
 try {
   const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1600, height: 1000 } });
+  // Stub clipboard I/O inside this isolated browser context. This makes the
+  // diagnostics capture deterministic in headless CI without relying on OS
+  // clipboard permissions; it does not modify the deployed application.
+  await context.addInitScript(() => {
+    let clipboardText = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text) => {
+          clipboardText = text;
+          window.__azimuteClipboardText = text;
+          window.dispatchEvent(new CustomEvent('azimute-diagnostics-copied'));
+        },
+        readText: async () => clipboardText,
+      },
+    });
+  });
   const page = await context.newPage();
   page.on('pageerror', (error) => errors.push(String(error)));
   page.on('console', (message) => {
@@ -79,6 +96,95 @@ try {
     .split(/\r?\n/)
     .filter((line) => /Persistent quilt cache:|Cache stages \(ms\):|Last update timings:|Cache hits \/ misses:/.test(line));
   await page.screenshot({ path: path.join(outputDir, 'persistent-cache-hit.png'), fullPage: true });
+
+  // Benchmark real zoom transitions on the deployed map. Capture the structured
+  // diagnostics from the app clipboard so every sample includes viewport zoom,
+  // cell mix, cache source, worker/geometry stages and MapLibre lifecycle timings.
+  const diagnosticsButton = page.getByRole('button', { name: 'Copy performance diagnostics (JSON)' });
+  const captureDiagnostics = async (label) => {
+    await page.evaluate(() => { window.__azimuteClipboardText = ''; });
+    await diagnosticsButton.click();
+    // The app's visible status message is transient and may be outside the
+    // viewport/hidden in CI. Wait for the actual clipboard payload instead.
+    await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 15000 });
+    const report = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
+    const sample = {
+      label,
+      capturedAt: report.capturedAt,
+      viewport: report.viewport,
+      performance: report.performance,
+      cache: report.cache ? {
+        hits: report.cache.hits,
+        misses: report.cache.misses,
+        entries: report.cache.entries,
+        estimatedBytes: report.cache.estimatedBytes,
+      } : null,
+    };
+    await fs.writeFile(path.join(outputDir, `zoom-${label}.json`), JSON.stringify(report, null, 2));
+    return sample;
+  };
+  const mapCanvas = page.locator('.maplibregl-canvas').first();
+  const canvasBounds = await mapCanvas.boundingBox();
+  if (!canvasBounds) throw new Error('MapLibre canvas was not visible for zoom-transition benchmark.');
+  const mapPoint = {
+    x: canvasBounds.x + canvasBounds.width / 2,
+    y: canvasBounds.y + canvasBounds.height / 2,
+  };
+  result.zoomTransitions = [];
+  result.zoomTransitions.push(await captureDiagnostics('overview-before-zoom'));
+  const overviewZoom = result.zoomTransitions[0].viewport?.zoom;
+
+  // Hover the canvas itself so the wheel gesture is delivered to MapLibre,
+  // rather than to a page overlay or the document. Split the gesture into
+  // smaller increments to avoid browser/CI wheel-event coalescing.
+  await mapCanvas.hover({ position: { x: canvasBounds.width / 2, y: canvasBounds.height / 2 } });
+  for (let i = 0; i < 6; i += 1) {
+    await page.mouse.wheel(0, -180);
+    await page.waitForTimeout(150);
+  }
+  await page.waitForTimeout(1500);
+  const closeupFirst = await captureDiagnostics('closeup-first-pass');
+  if (closeupFirst.viewport?.zoom === overviewZoom) {
+    throw new Error(`Zoom-transition benchmark did not change map zoom (still ${overviewZoom}).`);
+  }
+  result.zoomTransitions.push(closeupFirst);
+  // Return to the same overview and repeat the same zoom gesture. This helps
+  // distinguish cold viewport work from reuse of the same processed cell quilt.
+  for (let i = 0; i < 6; i += 1) {
+    await page.mouse.wheel(0, 180);
+    await page.waitForTimeout(150);
+  }
+  await page.waitForTimeout(1200);
+  for (let i = 0; i < 6; i += 1) {
+    await page.mouse.wheel(0, -180);
+    await page.waitForTimeout(150);
+  }
+  await page.waitForTimeout(1500);
+  const closeupRepeat = await captureDiagnostics('closeup-repeat-pass');
+  result.zoomTransitions.push(closeupRepeat);
+  result.checks.zoomTransitionBenchmark = true;
+  result.zoomTransitionComparison = {
+    firstPass: {
+      zoom: closeupFirst.viewport?.zoom,
+      scaleAndCellMix: closeupFirst.performance?.targetScaleAndCellMix,
+      viewportCellCount: closeupFirst.performance?.viewportCellCount,
+      quiltCacheSource: closeupFirst.performance?.quiltCacheSource,
+      quiltCacheHit: closeupFirst.performance?.quiltCacheHit,
+      timingsMs: closeupFirst.performance?.timingsMs,
+      cacheTimingsMs: closeupFirst.performance?.cacheTimingsMs,
+    },
+    repeatPass: {
+      zoom: closeupRepeat.viewport?.zoom,
+      scaleAndCellMix: closeupRepeat.performance?.targetScaleAndCellMix,
+      viewportCellCount: closeupRepeat.performance?.viewportCellCount,
+      quiltCacheSource: closeupRepeat.performance?.quiltCacheSource,
+      quiltCacheHit: closeupRepeat.performance?.quiltCacheHit,
+      timingsMs: closeupRepeat.performance?.timingsMs,
+      cacheTimingsMs: closeupRepeat.performance?.cacheTimingsMs,
+    },
+    interpretation: 'Compare matching zoom and cell mixes. A cache hit reuses processed geometry, but GeoJSON preparation, source updates and MapLibre lifecycle/render work may still dominate. Timings are lifecycle proxies, not isolated GPU timings.',
+  };
+  await page.screenshot({ path: path.join(outputDir, 'zoom-transition-closeup.png'), fullPage: true });
 
   // Layer-isolation smoke experiment: keep the same loaded viewport and
   // toggle one portrayal category at a time. Record interaction-to-screenshot
