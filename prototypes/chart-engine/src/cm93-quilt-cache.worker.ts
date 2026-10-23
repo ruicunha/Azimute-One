@@ -14,7 +14,7 @@ type RequestMessage =
   | { id: number; type: 'clear' };
 
 const DB_NAME = 'azimute-one-cm93-cache';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORE_NAME = 'quilt-results';
 const ACCESS_STORE_NAME = 'quilt-access';
 const CACHE_BUDGET_BYTES = 250 * 1024 * 1024;
@@ -32,7 +32,7 @@ type CacheTelemetry = {
   budgetBytes: number;
 };
 
-type CacheTimings = { indexedDbReadMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number };
+type CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number };
 
 const counters = { hits: 0, misses: 0, readErrors: 0, writes: 0, writeErrors: 0, evictions: 0, skippedOversized: 0 };
 let lastTelemetry: CacheTelemetry | null = null;
@@ -40,17 +40,44 @@ let lastTelemetry: CacheTelemetry | null = null;
 async function getTelemetry(): Promise<CacheTelemetry> {
   const database = await openDatabase();
   try {
-    const entries = await new Promise<CacheEntry[]>((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, 'readonly');
-      const request = transaction.objectStore(STORE_NAME).getAll() as IDBRequest<CacheEntry[]>;
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error ?? new Error('Could not inspect CM93 cache statistics.'));
+    const inventory = await new Promise<{ entries: number; estimatedBytes: number }>((resolve, reject) => {
+      const transaction = database.transaction([STORE_NAME, ACCESS_STORE_NAME], 'readonly');
+      const cursorRequest = transaction.objectStore(STORE_NAME).index('sizeBytes').openKeyCursor();
+      const accessRequest = transaction.objectStore(ACCESS_STORE_NAME).getAll() as IDBRequest<Array<{ key: string; sizeBytes?: number }>>;
+      let entries = 0;
+      let estimatedBytes = 0;
+      let cursorDone = false;
+      let accessDone = false;
+      const finishIfReady = () => {
+        if (cursorDone && accessDone) resolve({ entries, estimatedBytes });
+      };
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) {
+          cursorDone = true;
+          finishIfReady();
+          return;
+        }
+        const sizeBytes = Number(cursor.key);
+        if (Number.isFinite(sizeBytes) && sizeBytes > 0) {
+          entries++;
+          estimatedBytes += sizeBytes;
+        }
+        cursor.continue();
+      };
+      accessRequest.onsuccess = () => {
+        accessDone = true;
+        finishIfReady();
+      };
+      cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error('Could not inspect CM93 cache sizes.'));
+      accessRequest.onerror = () => reject(accessRequest.error ?? new Error('Could not inspect CM93 access metadata.'));
+      transaction.onerror = () => reject(transaction.error ?? new Error('Could not inspect CM93 cache statistics.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('CM93 cache statistics transaction was aborted.'));
     });
     lastTelemetry = {
       ...counters,
-      entries: entries.length,
-      estimatedBytes: entries.reduce((total, entry) =>
-        total + (typeof entry.sizeBytes === 'number' ? entry.sizeBytes : estimateSizeBytes(entry.value)), 0),
+      entries: inventory.entries,
+      estimatedBytes: inventory.estimatedBytes,
       budgetBytes: CACHE_BUDGET_BYTES,
     };
     return lastTelemetry;
@@ -75,6 +102,12 @@ function openDatabase(): Promise<IDBDatabase> {
       }
       if (!database.objectStoreNames.contains(ACCESS_STORE_NAME)) {
         database.createObjectStore(ACCESS_STORE_NAME, { keyPath: 'key' });
+      }
+      // A key cursor over this index exposes each entry's byte size without
+      // cloning its multi-megabyte GeoJSON payload into the worker.
+      const quiltStore = transaction?.objectStore(STORE_NAME);
+      if (quiltStore && !quiltStore.indexNames.contains('sizeBytes')) {
+        quiltStore.createIndex('sizeBytes', 'sizeBytes', { unique: false });
       }
       if ((event as IDBVersionChangeEvent).oldVersion < 2 && transaction) {
         const store = transaction.objectStore(STORE_NAME);
@@ -102,6 +135,7 @@ function openDatabase(): Promise<IDBDatabase> {
 async function readEntry(key: string): Promise<unknown | null> {
   const database = await openDatabase();
   try {
+    let cachedSizeBytes = 0;
     const value = await new Promise<unknown | null>((resolve, reject) => {
       // Cache entries contain large GeoJSON payloads. Keep the payload store
       // read-only on hits; writing the entry back just to update its access
@@ -109,19 +143,17 @@ async function readEntry(key: string): Promise<unknown | null> {
       const transaction = database.transaction(STORE_NAME, 'readonly');
       const request = transaction.objectStore(STORE_NAME).get(key) as IDBRequest<CacheEntry | undefined>;
       let cachedValue: unknown | null = null;
-      request.onsuccess = () => { cachedValue = request.result?.value ?? null; };
+      request.onsuccess = () => { cachedValue = request.result?.value ?? null; cachedSizeBytes = request.result?.sizeBytes ?? 0; };
       transaction.oncomplete = () => resolve(cachedValue);
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not read the CM93 browser cache.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('CM93 cache read was aborted.'));
     });
 
     if (value !== null) {
-      // Keep LRU metadata in a small, separate record so cache hits never
-      // rewrite the multi-megabyte GeoJSON payload. Do not wait for this
-      // best-effort timestamp update before returning the cached value.
-      const transaction = database.transaction(ACCESS_STORE_NAME, 'readwrite');
-      transaction.objectStore(ACCESS_STORE_NAME).put({ key, lastAccessedAt: Date.now() });
-      transaction.onerror = () => { /* Access metadata is diagnostic/eviction metadata only. */ };
+      // Keep LRU and size metadata separately so hits never rewrite the payload.
+      const accessTransaction = database.transaction(ACCESS_STORE_NAME, 'readwrite');
+      accessTransaction.objectStore(ACCESS_STORE_NAME).put({ key, lastAccessedAt: Date.now(), sizeBytes: cachedSizeBytes });
+      accessTransaction.onerror = () => { /* Access metadata is diagnostic/eviction metadata only. */ };
     }
     return value;
   } finally {
@@ -177,7 +209,71 @@ async function writeEntry(key: string, value: unknown): Promise<boolean> {
   }
 }
 
+async function enforceCacheBudget(): Promise<boolean> {
+  const database = await openDatabase();
+  try {
+    return await new Promise<boolean>((resolve, reject) => {
+      const transaction = database.transaction([STORE_NAME, ACCESS_STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const accessStore = transaction.objectStore(ACCESS_STORE_NAME);
+      const cursorRequest = store.index('sizeBytes').openKeyCursor();
+      const accessRequest = accessStore.getAll() as IDBRequest<Array<{ key: string; lastAccessedAt?: number; sizeBytes?: number }>>;
+      const entries: Array<{ key: string; sizeBytes: number }> = [];
+      let accessEntries: Array<{ key: string; lastAccessedAt?: number; sizeBytes?: number }> | null = null;
+      let cursorDone = false;
+      let cleaned = false;
+      let didEvict = false;
+      const cleanIfReady = () => {
+        if (!cursorDone || !accessEntries || cleaned) return;
+        cleaned = true;
+        const accessByKey = new Map(accessEntries.map((entry) => [entry.key, entry]));
+        let totalBytes = entries.reduce((total, entry) => total + entry.sizeBytes, 0);
+        const oldestFirst = entries.slice().sort((a, b) => {
+          const aAccess = accessByKey.get(a.key)?.lastAccessedAt ?? 0;
+          const bAccess = accessByKey.get(b.key)?.lastAccessedAt ?? 0;
+          return aAccess - bAccess;
+        });
+        for (const entry of oldestFirst) {
+          if (totalBytes <= CACHE_BUDGET_BYTES) break;
+          store.delete(entry.key);
+          accessStore.delete(entry.key);
+          totalBytes -= entry.sizeBytes;
+          counters.evictions++;
+          didEvict = true;
+        }
+        // Access records created by earlier versions lack sizeBytes, but the
+        // size index above still gives us accurate sizes for their payloads.
+      };
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) {
+          cursorDone = true;
+          cleanIfReady();
+          return;
+        }
+        const sizeBytes = Number(cursor.key);
+        if (Number.isFinite(sizeBytes) && sizeBytes > 0) {
+          entries.push({ key: String(cursor.primaryKey), sizeBytes });
+        }
+        cursor.continue();
+      };
+      accessRequest.onsuccess = () => {
+        accessEntries = accessRequest.result;
+        cleanIfReady();
+      };
+      cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error('Could not inspect CM93 cache sizes.'));
+      accessRequest.onerror = () => reject(accessRequest.error ?? new Error('Could not inspect CM93 access metadata.'));
+      transaction.oncomplete = () => resolve(didEvict);
+      transaction.onerror = () => reject(transaction.error ?? new Error('Could not enforce CM93 cache budget.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('CM93 cache budget transaction was aborted.'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
 async function lookup(request: Extract<RequestMessage, { type: 'lookup' }>) {
+  const workerStartedAt = performance.now();
   const readStartedAt = performance.now();
   let cached: unknown | null = null;
   try {
@@ -188,19 +284,33 @@ async function lookup(request: Extract<RequestMessage, { type: 'lookup' }>) {
   const indexedDbReadMs = performance.now() - readStartedAt;
   if (cached) {
     counters.hits++;
-    // Do not block a cache hit on telemetry. getAll() materializes every large
-    // stored GeoJSON value, so the inventory scan runs after the render reply.
-    if (!lastTelemetry) {
-      const telemetryStartedAt = performance.now();
+    // Do not block a cache hit on telemetry or budget maintenance. The inventory
+    // uses key-only cursors and lightweight access metadata, not GeoJSON payloads.
+    // Only open a write transaction when the last metadata-only inventory says
+    // the budget is exceeded. The first inventory is also metadata-only and runs
+    // in the background, so a cache hit never waits for maintenance.
+    const refreshTelemetry = () => {
       void getTelemetry().then((telemetry) => {
-        workerScope.postMessage({ type: 'telemetry', telemetry, timings: { telemetryMs: performance.now() - telemetryStartedAt } });
-      }).catch(() => { /* Statistics are diagnostic only. */ });
+        if (telemetry.estimatedBytes > CACHE_BUDGET_BYTES) {
+          return enforceCacheBudget().then((didEvict) => didEvict ? getTelemetry() : telemetry);
+        }
+        return telemetry;
+      }).then((telemetry) => {
+        workerScope.postMessage({ type: 'telemetry', telemetry });
+      }).catch(() => { /* Budget maintenance and statistics must not break rendering. */ });
+    };
+    if (lastTelemetry && lastTelemetry.estimatedBytes > CACHE_BUDGET_BYTES) {
+      void enforceCacheBudget().then((didEvict) => didEvict ? getTelemetry() : null).then((telemetry) => {
+        if (telemetry) workerScope.postMessage({ type: 'telemetry', telemetry });
+      }).catch(() => { /* Budget maintenance and statistics must not break rendering. */ });
+    } else if (!lastTelemetry) {
+      refreshTelemetry();
     }
-    return { cacheHit: true, value: cached, timings: { indexedDbReadMs }, telemetry: lastTelemetry ? { ...lastTelemetry, ...counters } : undefined };
+    return { cacheHit: true, value: cached, timings: { indexedDbReadMs, workerProcessingMs: performance.now() - workerStartedAt }, telemetry: lastTelemetry ? { ...lastTelemetry, ...counters } : undefined };
   }
 
   counters.misses++;
-  return { cacheHit: false, timings: { indexedDbReadMs } };
+  return { cacheHit: false, timings: { indexedDbReadMs, workerProcessingMs: performance.now() - workerStartedAt } };
 }
 
 async function build(request: Extract<RequestMessage, { type: 'build' }>) {

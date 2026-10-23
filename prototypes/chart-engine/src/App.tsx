@@ -259,7 +259,7 @@ export default function App() {
   const [cm93PointClassCounts, setCm93PointClassCounts] = useState<Array<{ name: string; count: number }>>([]);
   const [visibleCm93PointClasses, setVisibleCm93PointClasses] = useState<string[]>([]);
   const visibleCm93PointClassesRef = useRef<string[]>([]);
-  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number }; cacheTimings?: Cm93CacheTimings & { geoJsonPreparationMs?: number }; geometryMetrics?: import('./cm93-quilt-geometry').Cm93CoverageQuiltMetrics; quiltCacheHit?: boolean; quiltCacheSource?: 'memory' | 'indexeddb' | 'built' } | null>(null);
+  const [cm93QuiltStats, setCm93QuiltStats] = useState<{ scale: string; cells: number; features: number; cached: number; failed: number; classes: string[]; timings?: { selectMs: number; decodeMs: number; quiltMs: number; sourceMs: number; totalMs: number; mapRenderMs?: number }; cacheTimings?: Cm93CacheTimings & { geoJsonPreparationMs?: number }; geometryMetrics?: import('./cm93-quilt-geometry').Cm93CoverageQuiltMetrics; quiltCacheHit?: boolean; quiltCacheSource?: 'memory' | 'indexeddb' | 'built' } | null>(null);
   const [cm93CacheTelemetry, setCm93CacheTelemetry] = useState<Cm93CacheTelemetry | null>(null);
   useEffect(() => onCm93CacheTelemetry((telemetry, timings) => {
     setCm93CacheTelemetry(telemetry);
@@ -1054,6 +1054,15 @@ export default function App() {
       return;
     }
     cm93WebGpuBenchmarkScaleRef.current = selection.scale;
+    const mapRenderStartedAt = performance.now();
+    map.once('idle', () => {
+      if (requestId !== cm93QuiltRequestRef.current) return;
+      const mapRenderMs = performance.now() - mapRenderStartedAt;
+      setCm93QuiltStats((current) => current ? {
+        ...current,
+        timings: current.timings ? { ...current.timings, mapRenderMs } : current.timings,
+      } : current);
+    });
     const sourceStartedAt = performance.now();
     const data = { type: 'FeatureCollection', features: quiltFeatures } as never;
     const existingSource = map.getSource('cm93-quilt') as { setData?: (value: never) => void } | undefined;
