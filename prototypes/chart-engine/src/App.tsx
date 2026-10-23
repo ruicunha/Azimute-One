@@ -1094,10 +1094,12 @@ export default function App() {
       if (event.sourceId !== 'cm93-quilt') return;
       sourceDataEventCount++;
       const elapsedMs = performance.now() - mapRenderStartedAt;
-      if (sourceDataMs === undefined && (event.sourceDataType === 'content' || event.sourceDataType === 'metadata')) {
+      if (sourceDataMs === undefined && event.sourceDataType === 'content') {
         sourceDataMs = elapsedMs;
       }
-      if (sourceLoadedMs === undefined && event.isSourceLoaded) sourceLoadedMs = elapsedMs;
+      if (sourceLoadedMs === undefined && event.isSourceLoaded && sourceDataMs !== undefined) {
+        sourceLoadedMs = elapsedMs;
+      }
       updateRenderTimings();
     };
     const onRender = () => {
