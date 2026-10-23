@@ -32,7 +32,7 @@ type CacheTelemetry = {
   budgetBytes: number;
 };
 
-type CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number };
+type CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number; serializedPayloadBytes?: number; serializeMs?: number };
 
 const counters = { hits: 0, misses: 0, readErrors: 0, writes: 0, writeErrors: 0, evictions: 0, skippedOversized: 0 };
 let lastTelemetry: CacheTelemetry | null = null;
@@ -161,16 +161,18 @@ async function readEntry(key: string): Promise<unknown | null> {
   }
 }
 
-async function writeEntry(key: string, value: unknown): Promise<boolean> {
+async function writeEntry(key: string, value: unknown): Promise<{ written: boolean; serializedPayloadBytes: number; serializeMs: number }> {
   // Persist a compact byte payload so cache hits can transfer ownership of the
   // buffer to the UI thread instead of structured-cloning thousands of objects.
+  const serializeStartedAt = performance.now();
   const serialized = new TextEncoder().encode(JSON.stringify(value) ?? 'null');
+  const serializeMs = performance.now() - serializeStartedAt;
   const serializedBuffer = serialized.buffer.slice(
     serialized.byteOffset,
     serialized.byteOffset + serialized.byteLength,
   ) as ArrayBuffer;
   const sizeBytes = serializedBuffer.byteLength;
-  if (sizeBytes > CACHE_BUDGET_BYTES) { counters.skippedOversized++; return false; }
+  if (sizeBytes > CACHE_BUDGET_BYTES) { counters.skippedOversized++; return { written: false, serializedPayloadBytes: sizeBytes, serializeMs }; }
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -210,7 +212,7 @@ async function writeEntry(key: string, value: unknown): Promise<boolean> {
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not persist the CM93 quilt cache.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('CM93 quilt cache write was aborted.'));
     });
-    return true;
+    return { written: true, serializedPayloadBytes: sizeBytes, serializeMs };
   } finally {
     database.close();
   }
@@ -329,7 +331,10 @@ async function build(request: Extract<RequestMessage, { type: 'build' }>) {
   const geometryBuildMs = performance.now() - buildStartedAt;
   const persistStartedAt = performance.now();
   try {
-    if (await writeEntry(request.key, value)) counters.writes++;
+    const writeResult = await writeEntry(request.key, value);
+    if (writeResult.written) counters.writes++;
+    var serializedPayloadBytes = writeResult.serializedPayloadBytes;
+    var serializeMs = writeResult.serializeMs;
   } catch {
     counters.writeErrors++;
   }
@@ -337,7 +342,7 @@ async function build(request: Extract<RequestMessage, { type: 'build' }>) {
   let telemetry: CacheTelemetry | undefined;
   const telemetryStartedAt = performance.now();
   try { telemetry = await getTelemetry(); } catch { /* Stats are diagnostic only. */ }
-  return { value, cacheHit: false, telemetry, timings: { geometryBuildMs, persistMs, telemetryMs: performance.now() - telemetryStartedAt } };
+  return { value, cacheHit: false, telemetry, timings: { geometryBuildMs, persistMs, telemetryMs: performance.now() - telemetryStartedAt, serializedPayloadBytes, serializeMs } };
 }
 
 const workerScope = self as unknown as {
