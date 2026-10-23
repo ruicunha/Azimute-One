@@ -32,6 +32,7 @@ try {
         writeText: async (text) => {
           clipboardText = text;
           window.__azimuteClipboardText = text;
+          window.dispatchEvent(new CustomEvent('azimute-diagnostics-copied'));
         },
         readText: async () => clipboardText,
       },
@@ -102,7 +103,9 @@ try {
   const diagnosticsButton = page.getByRole('button', { name: 'Copy performance diagnostics (JSON)' });
   const captureDiagnostics = async (label) => {
     await diagnosticsButton.click();
-    await page.getByText('CM93 performance diagnostics copied.', { exact: true }).waitFor({ timeout: 10000 });
+    // The app's visible status message is transient and may be outside the
+    // viewport/hidden in CI. Wait for the actual clipboard payload instead.
+    await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 10000 });
     const report = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
     const sample = {
       label,
