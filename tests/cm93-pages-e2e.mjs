@@ -130,12 +130,19 @@ try {
     x: canvasBounds.x + canvasBounds.width / 2,
     y: canvasBounds.y + canvasBounds.height / 2,
   };
-  await page.mouse.move(mapPoint.x, mapPoint.y);
   result.zoomTransitions = [];
   result.zoomTransitions.push(await captureDiagnostics('overview-before-zoom'));
   const overviewZoom = result.zoomTransitions[0].viewport?.zoom;
-  await page.mouse.wheel(0, -720);
-  await page.waitForTimeout(2500);
+
+  // Hover the canvas itself so the wheel gesture is delivered to MapLibre,
+  // rather than to a page overlay or the document. Split the gesture into
+  // smaller increments to avoid browser/CI wheel-event coalescing.
+  await mapCanvas.hover({ position: { x: canvasBounds.width / 2, y: canvasBounds.height / 2 } });
+  for (let i = 0; i < 6; i += 1) {
+    await page.mouse.wheel(0, -180);
+    await page.waitForTimeout(150);
+  }
+  await page.waitForTimeout(1500);
   const closeupFirst = await captureDiagnostics('closeup-first-pass');
   if (closeupFirst.viewport?.zoom === overviewZoom) {
     throw new Error(`Zoom-transition benchmark did not change map zoom (still ${overviewZoom}).`);
@@ -143,10 +150,16 @@ try {
   result.zoomTransitions.push(closeupFirst);
   // Return to the same overview and repeat the same zoom gesture. This helps
   // distinguish cold viewport work from reuse of the same processed cell quilt.
-  await page.mouse.wheel(0, 720);
-  await page.waitForTimeout(1800);
-  await page.mouse.wheel(0, -720);
-  await page.waitForTimeout(2500);
+  for (let i = 0; i < 6; i += 1) {
+    await page.mouse.wheel(0, 180);
+    await page.waitForTimeout(150);
+  }
+  await page.waitForTimeout(1200);
+  for (let i = 0; i < 6; i += 1) {
+    await page.mouse.wheel(0, -180);
+    await page.waitForTimeout(150);
+  }
+  await page.waitForTimeout(1500);
   const closeupRepeat = await captureDiagnostics('closeup-repeat-pass');
   result.zoomTransitions.push(closeupRepeat);
   result.checks.zoomTransitionBenchmark = true;
