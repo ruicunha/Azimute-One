@@ -59,7 +59,7 @@ try {
     throw new Error('CM93 overview rendered but viewport quilt diagnostics were not produced; cache-path validation is incomplete.');
   }
   result.firstRunCacheDiagnostics = result.performanceDiagnosticsText
-    .split(/\\r?\\n/)
+    .split(/\r?\n/)
     .filter((line) => /Persistent quilt cache:|Cache stages \(ms\):|Last update timings:|Cache hits \/ misses:/.test(line));
 
   // Reload without closing the browser context: IndexedDB must survive the
@@ -70,13 +70,13 @@ try {
   await page.locator('input[webkitdirectory]').setInputFiles(datasetDir, { timeout: 120000 });
   await page.getByText('CM93 V2 structure recognized', { exact: true }).waitFor({ timeout: 180000 });
   await page.getByRole('button', { name: 'Render CM93 dataset overview' }).click();
-  await page.getByText(/^Rendered [0-9,]+ features from [0-9,]+\\/[0-9,]+ CM93 [A-Z]-scale cells\\./, { timeout: 600000 }).waitFor();
+  await page.getByText(/^Rendered [0-9,]+ features from [0-9,]+\/[0-9,]+ CM93 [A-Z]-scale cells\./, { timeout: 600000 }).waitFor();
   const indexedDbHit = page.getByText(/INDEXEDDB HIT — reused persistent processed geometry/);
   await indexedDbHit.waitFor({ timeout: 180000 });
   result.checks.indexedDbCacheHitAfterReload = true;
   result.secondRunPerformanceDiagnosticsText = await page.locator('body').innerText();
   result.secondRunCacheDiagnostics = result.secondRunPerformanceDiagnosticsText
-    .split(/\\r?\\n/)
+    .split(/\r?\n/)
     .filter((line) => /Persistent quilt cache:|Cache stages \(ms\):|Last update timings:|Cache hits \/ misses:/.test(line));
   await page.screenshot({ path: path.join(outputDir, 'persistent-cache-hit.png'), fullPage: true });
 
