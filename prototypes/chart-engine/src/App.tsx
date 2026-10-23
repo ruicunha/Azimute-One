@@ -1420,6 +1420,7 @@ export default function App() {
                   cacheTimingsMs: cm93QuiltStats.cacheTimings ?? null,
                   quiltCacheHit: cm93QuiltStats.quiltCacheHit ?? null,
                   quiltCacheSource: cm93QuiltStats.quiltCacheSource ?? null,
+                  renderLayerVisibility: cm93RenderLayerVisibility,
                   // Geometry metrics describe the quilt build. On a cache hit they
                   // are historical metrics from when this cached value was created.
                   geometryMetricsAreFromCachedBuild: cm93QuiltStats.quiltCacheHit ?? false,
