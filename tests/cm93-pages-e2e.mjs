@@ -55,11 +55,33 @@ try {
     result.performanceDiagnosticsNote = 'Overview rendered, but no viewport quilt diagnostics appeared before the timeout.';
   }
 
-  await page.screenshot({ path: path.join(outputDir, 'final-state.png'), fullPage: true });
-  if (errors.length) throw new Error(`Browser raised page errors: ${errors.join(' | ')}`);
   if (!result.checks.quiltDiagnosticsAvailable) {
     throw new Error('CM93 overview rendered but viewport quilt diagnostics were not produced; cache-path validation is incomplete.');
   }
+  result.firstRunCacheDiagnostics = result.performanceDiagnosticsText
+    .split('\\n')
+    .filter((line) => /Persistent quilt cache:|Cache stages \(ms\):|Last update timings:|Cache hits \/ misses:/.test(line));
+
+  // Reload without closing the browser context: IndexedDB must survive the
+  // reload. Re-import the same directory so the selected cells and cache key
+  // are identical, then verify the actual persistent-hit path is exercised.
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.getByText('Inspect CM93 V2 directory', { exact: true }).waitFor({ timeout: 60000 });
+  await page.locator('input[webkitdirectory]').setInputFiles(datasetDir, { timeout: 120000 });
+  await page.getByText('CM93 V2 structure recognized', { exact: true }).waitFor({ timeout: 180000 });
+  await page.getByRole('button', { name: 'Render CM93 dataset overview' }).click();
+  await page.getByText(/^Rendered [0-9,]+ features from [0-9,]+\\/[0-9,]+ CM93 [A-Z]-scale cells\\./, { timeout: 600000 }).waitFor();
+  const indexedDbHit = page.getByText(/INDEXEDDB HIT — reused persistent processed geometry/);
+  await indexedDbHit.waitFor({ timeout: 180000 });
+  result.checks.indexedDbCacheHitAfterReload = true;
+  result.secondRunPerformanceDiagnosticsText = await page.locator('body').innerText();
+  result.secondRunCacheDiagnostics = result.secondRunPerformanceDiagnosticsText
+    .split('\\n')
+    .filter((line) => /Persistent quilt cache:|Cache stages \(ms\):|Last update timings:|Cache hits \/ misses:/.test(line));
+  await page.screenshot({ path: path.join(outputDir, 'persistent-cache-hit.png'), fullPage: true });
+
+  if (errors.length) throw new Error(`Browser raised page errors: ${errors.join(' | ')}`);
+  await page.screenshot({ path: path.join(outputDir, 'final-state.png'), fullPage: true });
 } catch (error) {
   result.failure = error instanceof Error ? error.stack ?? error.message : String(error);
   try {
