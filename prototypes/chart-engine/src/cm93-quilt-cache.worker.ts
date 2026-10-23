@@ -32,7 +32,7 @@ type CacheTelemetry = {
   budgetBytes: number;
 };
 
-type CacheTimings = { indexedDbReadMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number };
+type CacheTimings = { indexedDbReadMs?: number; workerProcessingMs?: number; telemetryMs?: number; geometryBuildMs?: number; persistMs?: number };
 
 const counters = { hits: 0, misses: 0, readErrors: 0, writes: 0, writeErrors: 0, evictions: 0, skippedOversized: 0 };
 let lastTelemetry: CacheTelemetry | null = null;
@@ -182,10 +182,10 @@ async function writeEntry(key: string, value: unknown): Promise<boolean> {
   }
 }
 
-async function enforceCacheBudget(): Promise<void> {
+async function enforceCacheBudget(): Promise<boolean> {
   const database = await openDatabase();
   try {
-    await new Promise<void>((resolve, reject) => {
+    return await new Promise<boolean>((resolve, reject) => {
       const transaction = database.transaction([STORE_NAME, ACCESS_STORE_NAME], 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
       const accessStore = transaction.objectStore(ACCESS_STORE_NAME);
@@ -195,6 +195,7 @@ async function enforceCacheBudget(): Promise<void> {
       let accessEntries: Array<{ key: string; lastAccessedAt?: number; sizeBytes?: number }> | null = null;
       let cursorDone = false;
       let cleaned = false;
+      let didEvict = false;
       const cleanIfReady = () => {
         if (!cursorDone || !accessEntries || cleaned) return;
         cleaned = true;
@@ -211,16 +212,10 @@ async function enforceCacheBudget(): Promise<void> {
           accessStore.delete(entry.key);
           totalBytes -= entry.sizeBytes;
           counters.evictions++;
+          didEvict = true;
         }
-        // Legacy entries without usable size metadata cannot be safely counted
-        // toward the budget; discard them rather than allow unbounded growth.
-        for (const access of accessEntries) {
-          if (typeof access.sizeBytes !== 'number' || access.sizeBytes <= 0) {
-            store.delete(access.key);
-            accessStore.delete(access.key);
-            counters.evictions++;
-          }
-        }
+        // Access records created by earlier versions lack sizeBytes, but the
+        // size index above still gives us accurate sizes for their payloads.
       };
       cursorRequest.onsuccess = () => {
         const cursor = cursorRequest.result;
@@ -241,7 +236,7 @@ async function enforceCacheBudget(): Promise<void> {
       };
       cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error('Could not inspect CM93 cache sizes.'));
       accessRequest.onerror = () => reject(accessRequest.error ?? new Error('Could not inspect CM93 access metadata.'));
-      transaction.oncomplete = () => resolve();
+      transaction.oncomplete = () => resolve(didEvict);
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not enforce CM93 cache budget.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('CM93 cache budget transaction was aborted.'));
     });
@@ -266,8 +261,8 @@ async function lookup(request: Extract<RequestMessage, { type: 'lookup' }>) {
     // stored GeoJSON value, so the inventory scan runs after the render reply.
     // Enforce the configured limit without blocking the render reply. The size
     // index and access records avoid loading cached GeoJSON payloads to evict.
-    void enforceCacheBudget().then(() => getTelemetry()).then((telemetry) => {
-      workerScope.postMessage({ type: 'telemetry', telemetry });
+    void enforceCacheBudget().then((didEvict) => didEvict ? getTelemetry() : null).then((telemetry) => {
+      if (telemetry) workerScope.postMessage({ type: 'telemetry', telemetry });
     }).catch(() => { /* Budget maintenance and statistics must not break rendering. */ });
     if (!lastTelemetry) {
       const telemetryStartedAt = performance.now();
