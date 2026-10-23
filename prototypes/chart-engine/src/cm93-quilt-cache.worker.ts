@@ -330,11 +330,13 @@ async function build(request: Extract<RequestMessage, { type: 'build' }>) {
   const value = buildCm93CoverageQuiltFeatures(request.features, request.scale, request.engine);
   const geometryBuildMs = performance.now() - buildStartedAt;
   const persistStartedAt = performance.now();
+  let serializedPayloadBytes: number | undefined;
+  let serializeMs: number | undefined;
   try {
     const writeResult = await writeEntry(request.key, value);
     if (writeResult.written) counters.writes++;
-    var serializedPayloadBytes = writeResult.serializedPayloadBytes;
-    var serializeMs = writeResult.serializeMs;
+    serializedPayloadBytes = writeResult.serializedPayloadBytes;
+    serializeMs = writeResult.serializeMs;
   } catch {
     counters.writeErrors++;
   }
