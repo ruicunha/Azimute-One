@@ -80,6 +80,36 @@ try {
     .filter((line) => /Persistent quilt cache:|Cache stages \(ms\):|Last update timings:|Cache hits \/ misses:/.test(line));
   await page.screenshot({ path: path.join(outputDir, 'persistent-cache-hit.png'), fullPage: true });
 
+  // Layer-isolation smoke experiment: keep the same loaded viewport and
+  // toggle one portrayal category at a time. Record interaction-to-screenshot
+  // wall time as a responsiveness proxy (not as a pure MapLibre/GPU metric).
+  // The application exposes these controls specifically for portrayal testing.
+  result.layerIsolation = [];
+  const layerCases = [
+    { label: 'Area fills', file: 'layer-test-no-fills.png' },
+    { label: 'Lines (coastlines, contours, structures)', file: 'layer-test-no-lines.png' },
+    { label: 'Navigational symbols', file: 'layer-test-no-symbols.png' },
+    { label: 'Feature labels', file: 'layer-test-no-feature-labels.png' },
+    { label: 'Depth contour labels', file: 'layer-test-no-depth-labels.png' },
+  ];
+  for (const layerCase of layerCases) {
+    const checkbox = page.getByRole('checkbox', { name: layerCase.label, exact: true });
+    const before = await checkbox.isChecked();
+    const startedAt = Date.now();
+    await checkbox.setChecked(!before);
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: path.join(outputDir, layerCase.file), fullPage: false });
+    result.layerIsolation.push({
+      layer: layerCase.label,
+      toggledOff: before,
+      interactionToScreenshotMs: Date.now() - startedAt,
+      note: 'Responsiveness proxy only; not an isolated MapLibre/GPU render duration.',
+    });
+    await checkbox.setChecked(before);
+    await page.waitForTimeout(250);
+  }
+  result.checks.layerVisibilityControlsRespond = result.layerIsolation.length === layerCases.length;
+
   if (errors.length) throw new Error(`Browser raised page errors: ${errors.join(' | ')}`);
   await page.screenshot({ path: path.join(outputDir, 'final-state.png'), fullPage: true });
 } catch (error) {

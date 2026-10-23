@@ -963,6 +963,10 @@ export default function App() {
       lookupResult = await lookupCm93CachedQuilt<ReturnType<typeof buildCm93CoverageQuiltFeatures>>(cacheKey);
       if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
     }
+    // Start quilt-processing timing only after cache lookup completes. On a
+    // persistent hit, cache retrieval is reported separately by cacheTimings;
+    // counting it here made "quiltMs" misleadingly include the IndexedDB read.
+    quiltStartedAt = performance.now();
     const indexedDbCachedQuilt = lookupResult?.cacheHit ? lookupResult.value : null;
     const cacheHasQuilt = Boolean(memoryCachedQuilt || indexedDbCachedQuilt);
 
