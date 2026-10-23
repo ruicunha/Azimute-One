@@ -40,17 +40,44 @@ let lastTelemetry: CacheTelemetry | null = null;
 async function getTelemetry(): Promise<CacheTelemetry> {
   const database = await openDatabase();
   try {
-    const entries = await new Promise<CacheEntry[]>((resolve, reject) => {
-      const transaction = database.transaction(STORE_NAME, 'readonly');
-      const request = transaction.objectStore(STORE_NAME).getAll() as IDBRequest<CacheEntry[]>;
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error ?? new Error('Could not inspect CM93 cache statistics.'));
+    const inventory = await new Promise<{ entries: number; estimatedBytes: number }>((resolve, reject) => {
+      const transaction = database.transaction([STORE_NAME, ACCESS_STORE_NAME], 'readonly');
+      const cursorRequest = transaction.objectStore(STORE_NAME).index('sizeBytes').openKeyCursor();
+      const accessRequest = transaction.objectStore(ACCESS_STORE_NAME).getAll() as IDBRequest<Array<{ key: string; sizeBytes?: number }>>;
+      let entries = 0;
+      let estimatedBytes = 0;
+      let cursorDone = false;
+      let accessDone = false;
+      const finishIfReady = () => {
+        if (cursorDone && accessDone) resolve({ entries, estimatedBytes });
+      };
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) {
+          cursorDone = true;
+          finishIfReady();
+          return;
+        }
+        const sizeBytes = Number(cursor.key);
+        if (Number.isFinite(sizeBytes) && sizeBytes > 0) {
+          entries++;
+          estimatedBytes += sizeBytes;
+        }
+        cursor.continue();
+      };
+      accessRequest.onsuccess = () => {
+        accessDone = true;
+        finishIfReady();
+      };
+      cursorRequest.onerror = () => reject(cursorRequest.error ?? new Error('Could not inspect CM93 cache sizes.'));
+      accessRequest.onerror = () => reject(accessRequest.error ?? new Error('Could not inspect CM93 access metadata.'));
+      transaction.onerror = () => reject(transaction.error ?? new Error('Could not inspect CM93 cache statistics.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('CM93 cache statistics transaction was aborted.'));
     });
     lastTelemetry = {
       ...counters,
-      entries: entries.length,
-      estimatedBytes: entries.reduce((total, entry) =>
-        total + (typeof entry.sizeBytes === 'number' ? entry.sizeBytes : estimateSizeBytes(entry.value)), 0),
+      entries: inventory.entries,
+      estimatedBytes: inventory.estimatedBytes,
       budgetBytes: CACHE_BUDGET_BYTES,
     };
     return lastTelemetry;
