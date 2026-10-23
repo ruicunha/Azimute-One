@@ -942,7 +942,7 @@ export default function App() {
       : null;
 
     let lookupResult: Awaited<ReturnType<typeof lookupCm93CachedQuilt<ReturnType<typeof buildCm93CoverageQuiltFeatures>>>> | null = null;
-    const quiltStartedAt = performance.now();
+    let quiltStartedAt = performance.now();
     if (!memoryCachedQuilt) {
       lookupResult = await lookupCm93CachedQuilt<ReturnType<typeof buildCm93CoverageQuiltFeatures>>(cacheKey);
       if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
@@ -999,6 +999,9 @@ export default function App() {
       }
       decodeMs = performance.now() - decodeStartedAt;
       if (requestId !== cm93QuiltRequestRef.current || !cm93AutoEnabledRef.current) return;
+      // Keep quiltMs focused on geometry/cache-result processing rather than
+      // counting cell decoding twice; the lookup's worker timings are separate.
+      quiltStartedAt = performance.now();
     }
 
     // Cached geometry is already processed. Keep raw features empty on hits;
@@ -1032,7 +1035,14 @@ export default function App() {
     const quiltFeatures = buildCm93QuiltFeatures(coverageQuilt.features);
     const geoJsonPreparationMs = performance.now() - geoJsonPreparationStartedAt;
     const quiltMs = performance.now() - quiltStartedAt;
-    const cacheTimings = { ...(workerResult?.timings ?? {}), geoJsonPreparationMs };
+    const lookupRoundTripMs = lookupResult?.timings?.workerRoundTripMs ?? 0;
+    const buildRoundTripMs = workerResult?.timings?.workerRoundTripMs ?? 0;
+    const cacheTimings = {
+      ...(lookupResult?.timings ?? {}),
+      ...(workerResult?.timings ?? {}),
+      workerRoundTripMs: lookupRoundTripMs + buildRoundTripMs || undefined,
+      geoJsonPreparationMs,
+    };
     if (quiltFeatures.length === 0) {
       cm93CoverageByScaleRef.current = {};
       cm93WebGpuBenchmarkScaleRef.current = null;
