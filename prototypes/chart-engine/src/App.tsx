@@ -253,6 +253,15 @@ export default function App() {
   const [cm93Summary, setCm93Summary] = useState<Cm93DatasetSummary | null>(null);
   const [cm93AutoEnabled, setCm93AutoEnabled] = useState(false);
   const [cm93RenderLayerVisibility, setCm93RenderLayerVisibility] = useState({ fills: true, lines: true, symbols: true, labels: true, depthLabels: true });
+  const previousCm93RenderLayerVisibilityRef = useRef(cm93RenderLayerVisibility);
+  const [cm93LayerIsolationTiming, setCm93LayerIsolationTiming] = useState<{ category: string; visibility: 'shown' | 'hidden'; updateToIdleMs: number; capturedAt: string } | null>(null);
+  const [cm93CameraBenchmarkRunning, setCm93CameraBenchmarkRunning] = useState(false);
+  const [cm93CameraBenchmark, setCm93CameraBenchmark] = useState<{
+    category: string; visibility: 'shown' | 'hidden'; layerVisibility: typeof cm93RenderLayerVisibility;
+    zoomIn: { durationMs: number; moveEndToIdleMs: number | null; renderEvents: number; timedOut: boolean };
+    zoomRestore: { durationMs: number; moveEndToIdleMs: number | null; renderEvents: number; timedOut: boolean };
+    capturedAt: string;
+  } | null>(null);
   const [cm93ClippingEngine, setCm93ClippingEngine] = useState<Cm93PolygonClippingEngine>('polygon-clipping');
   const [cm93WebGpuBenchmark, setCm93WebGpuBenchmark] = useState<Cm93WebGpuCandidateBenchmark | null>(null);
   const [cm93WebGpuBenchmarkError, setCm93WebGpuBenchmarkError] = useState<string | null>(null);
@@ -265,6 +274,10 @@ export default function App() {
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+    const previous = previousCm93RenderLayerVisibilityRef.current;
+    const changedGroup = (Object.keys(cm93RenderLayerVisibility) as (keyof typeof cm93RenderLayerVisibility)[])
+      .find((group) => previous[group] !== cm93RenderLayerVisibility[group]);
+    previousCm93RenderLayerVisibilityRef.current = cm93RenderLayerVisibility;
     const groups: Record<keyof typeof cm93RenderLayerVisibility, string[]> = {
       fills: cm93Scales.map((scale) => 'cm93-quilt-fill' + (scale === 'Z' ? '' : '-' + scale)),
       lines: cm93Scales.map((scale) => 'cm93-quilt-lines' + (scale === 'Z' ? '' : '-' + scale)),
@@ -275,6 +288,27 @@ export default function App() {
     for (const [group, ids] of Object.entries(groups) as [keyof typeof cm93RenderLayerVisibility, string[]][]) {
       for (const id of ids) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', cm93RenderLayerVisibility[group] ? 'visible' : 'none');
     }
+    if (!changedGroup) return;
+    const labels: Record<keyof typeof cm93RenderLayerVisibility, string> = {
+      fills: 'Area fills', lines: 'Lines', symbols: 'Navigational symbols',
+      labels: 'Feature labels', depthLabels: 'Depth contour labels',
+    };
+    const startedAt = performance.now();
+    let completed = false;
+    const onIdle = () => {
+      if (completed) return;
+      completed = true;
+      map.off('idle', onIdle);
+      setCm93LayerIsolationTiming({
+        category: labels[changedGroup],
+        visibility: cm93RenderLayerVisibility[changedGroup] ? 'shown' : 'hidden',
+        updateToIdleMs: performance.now() - startedAt,
+        capturedAt: new Date().toISOString(),
+      });
+    };
+    map.on('idle', onIdle);
+    map.triggerRepaint();
+    return () => { map.off('idle', onIdle); };
   }, [cm93RenderLayerVisibility]);
 
   useEffect(() => onCm93CacheTelemetry((telemetry, timings) => {
@@ -1269,6 +1303,74 @@ export default function App() {
     return () => { map.off('moveend', sync); };
   }, [cm93AutoEnabled, syncCm93Quilt]);
 
+  const runCm93CameraBenchmark = async () => {
+    const map = mapRef.current;
+    if (!map || cm93CameraBenchmarkRunning) return;
+    const originalZoom = map.getZoom();
+    const targetZoom = originalZoom < 17.5 ? Math.min(18, originalZoom + 0.5) : Math.max(1, originalZoom - 0.5);
+    const autoWasEnabled = cm93AutoEnabledRef.current;
+    setCm93CameraBenchmarkRunning(true);
+    setCm93CameraBenchmark(null);
+    // Freeze quilt selection while the camera animates so this measures portrayal
+    // of the same source data, not cell decoding or geometry/cache work.
+    cm93AutoEnabledRef.current = false;
+
+    const measureTransition = (zoom: number) => new Promise<{
+      durationMs: number; moveEndToIdleMs: number | null; renderEvents: number; timedOut: boolean;
+    }>((resolve) => {
+      const startedAt = performance.now();
+      let moveEndAt: number | null = null;
+      let renderEvents = 0;
+      let finished = false;
+      const cleanup = () => {
+        map.off('render', onRender);
+        map.off('moveend', onMoveEnd);
+        map.off('idle', onIdle);
+        window.clearTimeout(timeoutId);
+      };
+      const finish = (timedOut: boolean) => {
+        if (finished) return;
+        finished = true;
+        const finishedAt = performance.now();
+        cleanup();
+        resolve({
+          durationMs: finishedAt - startedAt,
+          moveEndToIdleMs: moveEndAt === null ? null : Math.max(0, finishedAt - moveEndAt),
+          renderEvents,
+          timedOut,
+        });
+      };
+      const onRender = () => { renderEvents++; };
+      const onMoveEnd = () => { if (moveEndAt === null) moveEndAt = performance.now(); };
+      const onIdle = () => { if (moveEndAt !== null) finish(false); };
+      const timeoutId = window.setTimeout(() => finish(true), 15000);
+      map.on('render', onRender);
+      map.on('moveend', onMoveEnd);
+      map.on('idle', onIdle);
+      map.easeTo({ zoom, duration: 500, essential: true });
+    });
+
+    try {
+      const zoomIn = await measureTransition(targetZoom);
+      const zoomRestore = await measureTransition(originalZoom);
+      cm93AutoEnabledRef.current = autoWasEnabled;
+      if (autoWasEnabled) await syncCm93Quilt();
+      setCm93CameraBenchmark({
+        category: cm93LayerIsolationTiming?.category ?? 'Current layer configuration',
+        visibility: cm93LayerIsolationTiming?.visibility ?? 'shown',
+        layerVisibility: { ...cm93RenderLayerVisibility },
+        zoomIn,
+        zoomRestore,
+        capturedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'CM93 camera-transition benchmark failed.');
+    } finally {
+      cm93AutoEnabledRef.current = autoWasEnabled;
+      setCm93CameraBenchmarkRunning(false);
+    }
+  };
+
   const toggleCm93Auto = () => {
     const enabled = !cm93AutoEnabledRef.current;
     cm93AutoEnabledRef.current = enabled;
@@ -1405,6 +1507,18 @@ export default function App() {
               </ul>
             </div>
             <div className="cache-telemetry">
+              <span className="field-label">CONTROLLED CAMERA-TRANSITION BENCHMARK</span>
+              <p>Runs a fixed 0.5-zoom animation in and back out while holding the current CM93 source constant. This isolates portrayal/render work from cell selection and geometry construction; it is a diagnostic, not a full navigation zoom-transition test.</p>
+              <button className="secondary-button" type="button" disabled={cm93CameraBenchmarkRunning} onClick={() => void runCm93CameraBenchmark()}>
+                {cm93CameraBenchmarkRunning ? 'Measuring camera transitions…' : 'Run controlled camera-transition benchmark'}
+              </button>
+              {cm93CameraBenchmark && <ul data-testid="cm93-camera-benchmark-result">
+                <li>Layer configuration: {cm93CameraBenchmark.category} {cm93CameraBenchmark.visibility}</li>
+                <li>Zoom in: total {cm93CameraBenchmark.zoomIn.durationMs.toFixed(1)} ms · moveend → idle {cm93CameraBenchmark.zoomIn.moveEndToIdleMs?.toFixed(1) ?? 'n/a'} ms · {cm93CameraBenchmark.zoomIn.renderEvents} render events{cm93CameraBenchmark.zoomIn.timedOut ? ' · timed out' : ''}</li>
+                <li>Zoom restore: total {cm93CameraBenchmark.zoomRestore.durationMs.toFixed(1)} ms · moveend → idle {cm93CameraBenchmark.zoomRestore.moveEndToIdleMs?.toFixed(1) ?? 'n/a'} ms · {cm93CameraBenchmark.zoomRestore.renderEvents} render events{cm93CameraBenchmark.zoomRestore.timedOut ? ' · timed out' : ''}</li>
+              </ul>}
+            </div>
+            <div className="cache-telemetry">
               <span className="field-label">PERSISTENT QUILT CACHE STATISTICS</span>
               {cm93CacheTelemetry ? <ul>
                 <li>Cache hits / misses: {cm93CacheTelemetry.hits.toLocaleString()} / {cm93CacheTelemetry.misses.toLocaleString()}</li>
@@ -1454,6 +1568,8 @@ export default function App() {
                   quiltCacheHit: cm93QuiltStats.quiltCacheHit ?? null,
                   quiltCacheSource: cm93QuiltStats.quiltCacheSource ?? null,
                   renderLayerVisibility: cm93RenderLayerVisibility,
+                  layerIsolationTiming: cm93LayerIsolationTiming,
+                  cameraTransitionBenchmark: cm93CameraBenchmark,
                   // Geometry metrics describe the quilt build. On a cache hit they
                   // are historical metrics from when this cached value was created.
                   geometryMetricsAreFromCachedBuild: cm93QuiltStats.quiltCacheHit ?? false,
