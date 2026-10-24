@@ -314,10 +314,10 @@ export default function App() {
 
   useEffect(() => onCm93CacheTelemetry((telemetry, timings) => {
     setCm93CacheTelemetry(telemetry);
-    if (timings?.telemetryMs !== undefined) {
+    if (timings) {
       setCm93QuiltStats((current) => current ? {
         ...current,
-        cacheTimings: { ...(current.cacheTimings ?? {}), telemetryMs: timings.telemetryMs },
+        cacheTimings: { ...(current.cacheTimings ?? {}), ...timings },
       } : current);
     }
   }), []);
