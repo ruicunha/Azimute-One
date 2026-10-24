@@ -8,6 +8,38 @@ const datasetDir = process.env.CM93_DATASET_DIR;
 const outputDir = path.resolve('artifacts/cm93-pages-e2e');
 if (!datasetDir) throw new Error('CM93_DATASET_DIR is required.');
 
+async function findDetailedCm93Target(root) {
+  const pending = [root];
+  const candidates = [];
+  while (pending.length) {
+    const directory = pending.pop();
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(fullPath);
+        continue;
+      }
+      const match = /^(\\d{4})(\\d{4})\\.g$/i.exec(entry.name);
+      if (!match) continue;
+      const lowerLatitude = (Number(match[1]) - 270) / 3;
+      const lowerLongitude = Number(match[2]) / 3;
+      const latitude = lowerLatitude + 1 / 6;
+      let longitude = lowerLongitude + 1 / 6;
+      if (longitude > 180) longitude -= 360;
+      // Avoid polar/dateline cells where map projection and wrapping obscure
+      // the intended target. Prefer the largest available G-scale cell so the
+      // close-up exercises real detailed geometry rather than an empty grid.
+      if (latitude <= -60 || latitude >= 60 || longitude <= -150 || longitude >= 150) continue;
+      const stat = await fs.stat(fullPath);
+      candidates.push({ latitude, longitude, cellPath: path.relative(root, fullPath), sizeBytes: stat.size });
+    }
+  }
+  candidates.sort((a, b) => b.sizeBytes - a.sizeBytes);
+  if (!candidates.length) throw new Error('The CM93 sample has no usable G-scale cell for a detailed viewport benchmark.');
+  return candidates[0];
+}
+
 await fs.mkdir(outputDir, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const errors = [];
@@ -148,10 +180,9 @@ try {
   const overviewZoom = result.zoomTransitions[0].viewport?.zoom;
 
   // The overview can be centered over open ocean, where labels and depth
-  // contours correctly have no pixels to render. Pan to Boston, a chart-rich
-  // location in the bundled CM93 sample, before measuring portrayal layers.
-  // MapLibre's Web Mercator world-pixel transform lets the test move the map
-  // through real pointer input without reaching into application internals.
+  // contours correctly have no pixels to render. Choose an actual G-scale cell
+  // from the imported sample (prefer the largest cell) so the close-up has real
+  // detailed data. Pan there using real pointer input, without app internals.
   const hoverMap = async () => {
     await mapCanvas.hover({ position: { x: canvasBounds.width / 2, y: canvasBounds.height / 2 } });
   };
@@ -171,7 +202,7 @@ try {
   if (!currentCenter || typeof overviewZoom !== 'number') {
     throw new Error('Overview diagnostics did not include the map center and zoom needed for chart-rich navigation.');
   }
-  const target = { longitude: -71.06, latitude: 42.36 };
+  const target = await findDetailedCm93Target(datasetDir);
   const worldPixels = 512 * (2 ** overviewZoom);
   let longitudeDelta = target.longitude - currentCenter.longitude;
   if (longitudeDelta > 180) longitudeDelta -= 360;
@@ -193,23 +224,26 @@ try {
 
   // Labels and depth contours have higher minimum zooms, so make the benchmark
   // a genuine close-up rather than assuming 18 wheel events are sufficient.
-  await wheelZoom(-180, 50);
+  await wheelZoom(-180, 58);
   const closeupFirst = await captureDiagnostics('closeup-first-pass');
-  if ((closeupFirst.viewport?.zoom ?? overviewZoom) < 10.5) {
-    throw new Error(`Chart-rich benchmark did not reach portrayal detail scale: overview ${overviewZoom}, close-up ${closeupFirst.viewport?.zoom}.`);
+  if ((closeupFirst.viewport?.zoom ?? overviewZoom) < 15.5) {
+    throw new Error(`Detailed benchmark did not reach G-scale portrayal: overview ${overviewZoom}, close-up ${closeupFirst.viewport?.zoom}.`);
+  }
+  if ((closeupFirst.performance?.viewportCellCount ?? 0) < 1) {
+    throw new Error(`Selected G-scale cell ${target.cellPath} but the detailed viewport selected no CM93 cells.`);
   }
   result.zoomTransitions.push(closeupFirst);
 
   // Return to the original overview, capture it to prove that the map really
   // moved, then revisit the exact same close-up viewport. This tests cache
   // reuse instead of merely copying the last successful report twice.
-  await wheelZoom(180, 50);
+  await wheelZoom(180, 58);
   const overviewRepeat = await captureDiagnostics('overview-before-repeat');
   if (Math.abs((overviewRepeat.viewport?.zoom ?? Number.NaN) - overviewZoom) > 0.35) {
     throw new Error(`Zoom-transition benchmark did not return to overview: expected ${overviewZoom}, got ${overviewRepeat.viewport?.zoom}.`);
   }
   result.zoomTransitions.push(overviewRepeat);
-  await wheelZoom(-180, 50);
+  await wheelZoom(-180, 58);
   const closeupRepeat = await captureDiagnostics('closeup-repeat-pass');
   if (Math.abs((closeupRepeat.viewport?.zoom ?? Number.NaN) - (closeupFirst.viewport?.zoom ?? Number.NaN)) > 0.35) {
     throw new Error(`Repeated close-up viewport differs from first pass: ${closeupFirst.viewport?.zoom} vs ${closeupRepeat.viewport?.zoom}.`);
