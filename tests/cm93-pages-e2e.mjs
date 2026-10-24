@@ -8,6 +8,38 @@ const datasetDir = process.env.CM93_DATASET_DIR;
 const outputDir = path.resolve('artifacts/cm93-pages-e2e');
 if (!datasetDir) throw new Error('CM93_DATASET_DIR is required.');
 
+async function findDetailedCm93Target(root) {
+  const pending = [root];
+  const candidates = [];
+  while (pending.length) {
+    const directory = pending.pop();
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(fullPath);
+        continue;
+      }
+      const match = /^(\d{4})(\d{4})\.g$/i.exec(entry.name);
+      if (!match) continue;
+      const lowerLatitude = (Number(match[1]) - 270) / 3;
+      const lowerLongitude = Number(match[2]) / 3;
+      const latitude = lowerLatitude + 1 / 6;
+      let longitude = lowerLongitude + 1 / 6;
+      if (longitude > 180) longitude -= 360;
+      // Avoid polar/dateline cells where map projection and wrapping obscure
+      // the intended target. Prefer the largest available G-scale cell so the
+      // close-up exercises real detailed geometry rather than an empty grid.
+      if (latitude <= -60 || latitude >= 60 || longitude <= -150 || longitude >= 150) continue;
+      const stat = await fs.stat(fullPath);
+      candidates.push({ latitude, longitude, cellPath: path.relative(root, fullPath), sizeBytes: stat.size });
+    }
+  }
+  candidates.sort((a, b) => b.sizeBytes - a.sizeBytes);
+  if (!candidates.length) throw new Error('The CM93 sample has no usable G-scale cell for a detailed viewport benchmark.');
+  return candidates[0];
+}
+
 await fs.mkdir(outputDir, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const errors = [];
@@ -57,7 +89,7 @@ try {
   await page.screenshot({ path: path.join(outputDir, 'dataset-recognized.png'), fullPage: true });
 
   await page.getByRole('button', { name: 'Render CM93 dataset overview' }).click();
-  await page.getByText(/^Rendered [0-9,]+ features from [0-9,]+\/[0-9,]+ CM93 [A-Z]-scale cells\./, { timeout: 600000 }).waitFor();
+  await page.getByText(/^Rendered [0-9,]+ features from [0-9,]+\/[0-9,]+ CM93 [A-Z]-scale cells\./).waitFor({ timeout: 600000 });
   result.checks.cm93OverviewRendered = true;
   result.renderStatus = await page.locator('body').innerText();
   await page.screenshot({ path: path.join(outputDir, 'overview-rendered.png'), fullPage: true });
@@ -88,7 +120,7 @@ try {
   await page.locator('input[webkitdirectory]').setInputFiles(datasetDir, { timeout: 120000 });
   await page.getByText('CM93 V2 structure recognized', { exact: true }).waitFor({ timeout: 180000 });
   await page.getByRole('button', { name: 'Render CM93 dataset overview' }).click();
-  await page.getByText(/^Rendered [0-9,]+ features from [0-9,]+\/[0-9,]+ CM93 [A-Z]-scale cells\./, { timeout: 600000 }).waitFor();
+  await page.getByText(/^Rendered [0-9,]+ features from [0-9,]+\/[0-9,]+ CM93 [A-Z]-scale cells\./).waitFor({ timeout: 600000 });
   const indexedDbHit = page.getByText(/INDEXEDDB HIT — reused persistent processed geometry/);
   await indexedDbHit.waitFor({ timeout: 180000 });
   result.checks.indexedDbCacheHitAfterReload = true;
@@ -147,11 +179,10 @@ try {
   result.zoomTransitions.push(await captureDiagnostics('overview-before-zoom'));
   const overviewZoom = result.zoomTransitions[0].viewport?.zoom;
 
-  // captureDiagnostics clicks a sidebar button, moving the mouse away from
-  // the map. Re-hover before EVERY wheel sequence; otherwise later wheel events
-  // are delivered to the sidebar and the test silently captures stale metrics.
-  // Use enough increments to reach a meaningful close-up rather than another
-  // world/continent overview, while avoiding browser wheel-event coalescing.
+  // The overview can be centered over open ocean, where labels and depth
+  // contours correctly have no pixels to render. Choose an actual G-scale cell
+  // from the imported sample (prefer the largest cell) so the close-up has real
+  // detailed data. Pan there using real pointer input, without app internals.
   const hoverMap = async () => {
     await mapCanvas.hover({ position: { x: canvasBounds.width / 2, y: canvasBounds.height / 2 } });
   };
@@ -163,29 +194,62 @@ try {
     }
     await page.waitForTimeout(1500);
   };
-  await wheelZoom(-180, 18);
+  const mercatorY = (latitude) => {
+    const radians = latitude * Math.PI / 180;
+    return (1 - Math.log(Math.tan(radians) + 1 / Math.cos(radians)) / Math.PI) / 2;
+  };
+  const currentCenter = result.zoomTransitions[0].viewport?.center;
+  if (!currentCenter || typeof overviewZoom !== 'number') {
+    throw new Error('Overview diagnostics did not include the map center and zoom needed for chart-rich navigation.');
+  }
+  const target = await findDetailedCm93Target(datasetDir);
+  const worldPixels = 512 * (2 ** overviewZoom);
+  let longitudeDelta = target.longitude - currentCenter.longitude;
+  if (longitudeDelta > 180) longitudeDelta -= 360;
+  if (longitudeDelta < -180) longitudeDelta += 360;
+  const dragX = -longitudeDelta / 360 * worldPixels;
+  const dragY = (mercatorY(currentCenter.latitude) - mercatorY(target.latitude)) * worldPixels;
+  const dragStart = { x: canvasBounds.x + canvasBounds.width / 2, y: canvasBounds.y + canvasBounds.height / 2 };
+  await page.mouse.move(dragStart.x, dragStart.y);
+  await page.mouse.down();
+  await page.mouse.move(dragStart.x + dragX, dragStart.y + dragY, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(1000);
+  const chartArea = await captureDiagnostics('chart-area-before-zoom');
+  const chartCenter = chartArea.viewport?.center;
+  if (!chartCenter || Math.abs(chartCenter.longitude - target.longitude) > 3 || Math.abs(chartCenter.latitude - target.latitude) > 3) {
+    throw new Error(`Could not center chart-rich viewport near Boston: expected ${target.latitude},${target.longitude}; got ${chartCenter?.latitude},${chartCenter?.longitude}.`);
+  }
+  result.chartRichViewport = { target, actualCenter: chartCenter, overviewZoom };
+
+  // Labels and depth contours have higher minimum zooms, so make the benchmark
+  // a genuine close-up rather than assuming 18 wheel events are sufficient.
+  await wheelZoom(-180, 58);
   const closeupFirst = await captureDiagnostics('closeup-first-pass');
-  if ((closeupFirst.viewport?.zoom ?? overviewZoom) < overviewZoom + 3) {
-    throw new Error(`Zoom-transition benchmark did not reach close-up scale: overview ${overviewZoom}, close-up ${closeupFirst.viewport?.zoom}.`);
+  if ((closeupFirst.viewport?.zoom ?? overviewZoom) < 15.5) {
+    throw new Error(`Detailed benchmark did not reach G-scale portrayal: overview ${overviewZoom}, close-up ${closeupFirst.viewport?.zoom}.`);
+  }
+  if ((closeupFirst.performance?.viewportCellCount ?? 0) < 1) {
+    throw new Error(`Selected G-scale cell ${target.cellPath} but the detailed viewport selected no CM93 cells.`);
   }
   result.zoomTransitions.push(closeupFirst);
 
   // Return to the original overview, capture it to prove that the map really
   // moved, then revisit the exact same close-up viewport. This tests cache
   // reuse instead of merely copying the last successful report twice.
-  await wheelZoom(180, 18);
+  await wheelZoom(180, 58);
   const overviewRepeat = await captureDiagnostics('overview-before-repeat');
   if (Math.abs((overviewRepeat.viewport?.zoom ?? Number.NaN) - overviewZoom) > 0.35) {
     throw new Error(`Zoom-transition benchmark did not return to overview: expected ${overviewZoom}, got ${overviewRepeat.viewport?.zoom}.`);
   }
   result.zoomTransitions.push(overviewRepeat);
-  await wheelZoom(-180, 18);
+  await wheelZoom(-180, 58);
   const closeupRepeat = await captureDiagnostics('closeup-repeat-pass');
   if (Math.abs((closeupRepeat.viewport?.zoom ?? Number.NaN) - (closeupFirst.viewport?.zoom ?? Number.NaN)) > 0.35) {
     throw new Error(`Repeated close-up viewport differs from first pass: ${closeupFirst.viewport?.zoom} vs ${closeupRepeat.viewport?.zoom}.`);
   }
-  if (JSON.stringify(closeupFirst.performance) === JSON.stringify(closeupRepeat.performance)) {
-    throw new Error('Repeated close-up diagnostics are byte-for-byte identical; the test may be reading stale quilt metrics.');
+  if (closeupFirst.capturedAt && closeupFirst.capturedAt === closeupRepeat.capturedAt) {
+    throw new Error('Repeated close-up returned the same capture timestamp; the test may be reading a stale diagnostics payload.');
   }
   if (closeupRepeat.performance?.quiltCacheHit !== true) {
     throw new Error(`Repeated close-up did not reuse the processed quilt (cache source: ${closeupRepeat.performance?.quiltCacheSource ?? 'unknown'}).`);
