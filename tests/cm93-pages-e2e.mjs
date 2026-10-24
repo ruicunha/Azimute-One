@@ -20,7 +20,7 @@ async function findDetailedCm93Target(root) {
         pending.push(fullPath);
         continue;
       }
-      const match = /^(\\d{4})(\\d{4})\\.g$/i.exec(entry.name);
+      const match = /^(\d{4})(\d{4})\.g$/i.exec(entry.name);
       if (!match) continue;
       const lowerLatitude = (Number(match[1]) - 270) / 3;
       const lowerLongitude = Number(match[2]) / 3;
