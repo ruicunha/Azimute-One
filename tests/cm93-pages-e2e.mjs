@@ -203,34 +203,55 @@ try {
     throw new Error('Overview diagnostics did not include the map center and zoom needed for chart-rich navigation.');
   }
   const target = await findDetailedCm93Target(datasetDir);
-  const worldPixels = 512 * (2 ** overviewZoom);
-  let longitudeDelta = target.longitude - currentCenter.longitude;
+  // First move roughly at overview scale, then zoom to an intermediate level
+  // before correcting the center. At world zoom, a one-pixel drag can be too
+  // small to cross MapLibre's drag threshold and may leave us outside a cell.
+  const panTarget = { longitude: target.longitude, latitude: target.latitude - 0.12 };
+  const overviewWorldPixels = 512 * (2 ** overviewZoom);
+  let longitudeDelta = panTarget.longitude - currentCenter.longitude;
   if (longitudeDelta > 180) longitudeDelta -= 360;
   if (longitudeDelta < -180) longitudeDelta += 360;
-  const dragX = -longitudeDelta / 360 * worldPixels;
-  const dragY = (mercatorY(currentCenter.latitude) - mercatorY(target.latitude)) * worldPixels;
+  const dragX = -longitudeDelta / 360 * overviewWorldPixels;
+  const dragY = (mercatorY(currentCenter.latitude) - mercatorY(panTarget.latitude)) * overviewWorldPixels;
   const dragStart = { x: canvasBounds.x + canvasBounds.width / 2, y: canvasBounds.y + canvasBounds.height / 2 };
-  await page.mouse.move(dragStart.x, dragStart.y);
-  await page.mouse.down();
-  await page.mouse.move(dragStart.x + dragX, dragStart.y + dragY, { steps: 12 });
-  await page.mouse.up();
-  await page.waitForTimeout(1000);
-  const chartArea = await captureDiagnostics('chart-area-before-zoom');
-  const chartCenter = chartArea.viewport?.center;
-  if (!chartCenter || Math.abs(chartCenter.longitude - target.longitude) > 3 || Math.abs(chartCenter.latitude - target.latitude) > 3) {
-    throw new Error(`Could not center chart-rich viewport near Boston: expected ${target.latitude},${target.longitude}; got ${chartCenter?.latitude},${chartCenter?.longitude}.`);
+  const dragBy = async (dx, dy) => {
+    await page.mouse.move(dragStart.x, dragStart.y);
+    await page.mouse.down();
+    await page.mouse.move(dragStart.x + dx, dragStart.y + dy, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+  };
+  await dragBy(dragX, dragY);
+  await wheelZoom(-180, 20);
+  let chartArea = await captureDiagnostics('chart-area-before-zoom');
+  let chartCenter = chartArea.viewport?.center;
+  const intermediateZoom = chartArea.viewport?.zoom;
+  if (!chartCenter || typeof intermediateZoom !== 'number') {
+    throw new Error('Intermediate chart-area diagnostics did not include center and zoom.');
   }
-  result.chartRichViewport = { target, actualCenter: chartCenter, overviewZoom };
-
+  // Correct at the intermediate zoom, where a drag is precise enough to land
+  // inside the selected G-scale cell instead of quantizing by a whole cell.
+  const correctionWorldPixels = 512 * (2 ** intermediateZoom);
+  let correctionX = (chartCenter.longitude - target.longitude) / 360 * correctionWorldPixels;
+  if (correctionX > correctionWorldPixels / 2) correctionX -= correctionWorldPixels;
+  if (correctionX < -correctionWorldPixels / 2) correctionX += correctionWorldPixels;
+  const correctionY = (mercatorY(chartCenter.latitude) - mercatorY(panTarget.latitude)) * correctionWorldPixels;
+  await dragBy(correctionX, correctionY);
+  chartArea = await captureDiagnostics('chart-area-after-correction');
+  chartCenter = chartArea.viewport?.center;
+  result.chartRichViewport = { target, panTarget, actualCenter: chartCenter, overviewZoom, intermediateZoom };
   // Labels and depth contours have higher minimum zooms, so make the benchmark
   // a genuine close-up rather than assuming 18 wheel events are sufficient.
-  await wheelZoom(-180, 58);
+  await wheelZoom(-180, 38);
+  // Do not accept camera zoom alone: wait until the app has selected the
+  // matching G-scale quilt after zoomend before capturing performance data.
+  await page.waitForFunction(() => /Automatic CM93 detail:.*G-scale coverage quilt/.test(document.body.innerText), { timeout: 60000 });
   const closeupFirst = await captureDiagnostics('closeup-first-pass');
   if ((closeupFirst.viewport?.zoom ?? overviewZoom) < 15.5) {
     throw new Error(`Detailed benchmark did not reach G-scale portrayal: overview ${overviewZoom}, close-up ${closeupFirst.viewport?.zoom}.`);
   }
-  if ((closeupFirst.performance?.viewportCellCount ?? 0) < 1) {
-    throw new Error(`Selected G-scale cell ${target.cellPath} but the detailed viewport selected no CM93 cells.`);
+  if ((closeupFirst.performance?.viewportCellCount ?? 0) < 1 || !/\bG:\d+/.test(closeupFirst.performance?.targetScaleAndCellMix ?? '')) {
+    throw new Error(`The detailed viewport did not select its actual G-scale cell ${target.cellPath}: ${closeupFirst.performance?.targetScaleAndCellMix ?? 'no scale mix'}, ${closeupFirst.performance?.viewportCellCount ?? 0} cells.`);
   }
   result.zoomTransitions.push(closeupFirst);
 
