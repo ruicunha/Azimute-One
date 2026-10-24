@@ -203,16 +203,16 @@ try {
     throw new Error('Overview diagnostics did not include the map center and zoom needed for chart-rich navigation.');
   }
   const target = await findDetailedCm93Target(datasetDir);
-  // At overview zoom a one-pixel drag can move the center by a substantial
-  // fraction of a G-scale cell. Aim slightly south of its center to compensate
-  // for the repeatable wheel-anchor drift, then apply a measured correction.
+  // First move roughly at overview scale, then zoom to an intermediate level
+  // before correcting the center. At world zoom, a one-pixel drag can be too
+  // small to cross MapLibre's drag threshold and may leave us outside a cell.
   const panTarget = { longitude: target.longitude, latitude: target.latitude - 0.12 };
-  const worldPixels = 512 * (2 ** overviewZoom);
+  const overviewWorldPixels = 512 * (2 ** overviewZoom);
   let longitudeDelta = panTarget.longitude - currentCenter.longitude;
   if (longitudeDelta > 180) longitudeDelta -= 360;
   if (longitudeDelta < -180) longitudeDelta += 360;
-  const dragX = -longitudeDelta / 360 * worldPixels;
-  const dragY = (mercatorY(currentCenter.latitude) - mercatorY(panTarget.latitude)) * worldPixels;
+  const dragX = -longitudeDelta / 360 * overviewWorldPixels;
+  const dragY = (mercatorY(currentCenter.latitude) - mercatorY(panTarget.latitude)) * overviewWorldPixels;
   const dragStart = { x: canvasBounds.x + canvasBounds.width / 2, y: canvasBounds.y + canvasBounds.height / 2 };
   const dragBy = async (dx, dy) => {
     await page.mouse.move(dragStart.x, dragStart.y);
@@ -222,23 +222,27 @@ try {
     await page.waitForTimeout(700);
   };
   await dragBy(dragX, dragY);
+  await wheelZoom(-180, 20);
   let chartArea = await captureDiagnostics('chart-area-before-zoom');
   let chartCenter = chartArea.viewport?.center;
-  if (!chartCenter) throw new Error('Chart-area diagnostics did not include the viewport center.');
-  let correctionX = (chartCenter.longitude - target.longitude) / 360 * worldPixels;
-  if (correctionX > worldPixels / 2) correctionX -= worldPixels;
-  if (correctionX < -worldPixels / 2) correctionX += worldPixels;
-  const correctionY = (mercatorY(chartCenter.latitude) - mercatorY(panTarget.latitude)) * worldPixels;
-  if (Math.abs(correctionX) > 0.15 || Math.abs(correctionY) > 0.15) {
-    await dragBy(correctionX, correctionY);
-    chartArea = await captureDiagnostics('chart-area-after-correction');
-    chartCenter = chartArea.viewport?.center;
+  const intermediateZoom = chartArea.viewport?.zoom;
+  if (!chartCenter || typeof intermediateZoom !== 'number') {
+    throw new Error('Intermediate chart-area diagnostics did not include center and zoom.');
   }
-  result.chartRichViewport = { target, panTarget, actualCenter: chartCenter, overviewZoom };
-
+  // Correct at the intermediate zoom, where a drag is precise enough to land
+  // inside the selected G-scale cell instead of quantizing by a whole cell.
+  const correctionWorldPixels = 512 * (2 ** intermediateZoom);
+  let correctionX = (chartCenter.longitude - target.longitude) / 360 * correctionWorldPixels;
+  if (correctionX > correctionWorldPixels / 2) correctionX -= correctionWorldPixels;
+  if (correctionX < -correctionWorldPixels / 2) correctionX += correctionWorldPixels;
+  const correctionY = (mercatorY(chartCenter.latitude) - mercatorY(panTarget.latitude)) * correctionWorldPixels;
+  await dragBy(correctionX, correctionY);
+  chartArea = await captureDiagnostics('chart-area-after-correction');
+  chartCenter = chartArea.viewport?.center;
+  result.chartRichViewport = { target, panTarget, actualCenter: chartCenter, overviewZoom, intermediateZoom };
   // Labels and depth contours have higher minimum zooms, so make the benchmark
   // a genuine close-up rather than assuming 18 wheel events are sufficient.
-  await wheelZoom(-180, 58);
+  await wheelZoom(-180, 38);
   const closeupFirst = await captureDiagnostics('closeup-first-pass');
   if ((closeupFirst.viewport?.zoom ?? overviewZoom) < 15.5) {
     throw new Error(`Detailed benchmark did not reach G-scale portrayal: overview ${overviewZoom}, close-up ${closeupFirst.viewport?.zoom}.`);
