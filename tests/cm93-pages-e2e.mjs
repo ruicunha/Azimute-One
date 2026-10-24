@@ -177,7 +177,7 @@ try {
   if (longitudeDelta > 180) longitudeDelta -= 360;
   if (longitudeDelta < -180) longitudeDelta += 360;
   const dragX = -longitudeDelta / 360 * worldPixels;
-  const dragY = (mercatorY(target.latitude) - mercatorY(currentCenter.latitude)) * worldPixels;
+  const dragY = (mercatorY(currentCenter.latitude) - mercatorY(target.latitude)) * worldPixels;
   const dragStart = { x: canvasBounds.x + canvasBounds.width / 2, y: canvasBounds.y + canvasBounds.height / 2 };
   await page.mouse.move(dragStart.x, dragStart.y);
   await page.mouse.down();
