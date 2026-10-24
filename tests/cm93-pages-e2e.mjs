@@ -552,19 +552,12 @@ try {
     if (layerCase.label === 'Navigational symbols') {
       result.checks.symbolLayerPixelChangeObserved = stableBefore.hash !== stableAfter.hash;
       result.checks.symbolLayerPixelChangeInterpretation = stableBefore.hash !== stableAfter.hash
-        ? (pointScan.found
-          ? `The symbol layer changed visible pixels; MapLibre also hit-tested a ${pointScan.feature?.properties?.cm93Class} point.`
-          : 'The symbol layer changed visible pixels. The click grid did not intersect a point feature, so point hit-testing is inconclusive but the canvas delta confirms the layer contributes pixels.')
-        : 'The symbol-layer control state changed, but no visible symbol pixels were detected in this viewport; this is inconclusive, not a rendering failure.';
-      // With every available point class enabled, this chart-rich viewport
-      // previously showed a repeatable canvas delta when the symbol layer was
-      // hidden. Keep that as a regression assertion; the click grid is only
-      // supplemental because small point symbols are easy to miss between samples.
+        ? `The symbol layer changed visible pixels; the viewport-wide query found ${renderedPointSymbolSamples.length} rendered point symbols (for example, ${renderedPointSymbolSamples[0]?.class}).`
+        : 'The symbol-layer control state changed, but no visible symbol pixels were detected in this viewport.';
+      // The viewport-wide rendered-feature query proves the viewport contains
+      // actual placed point symbols; hiding the layer must change canvas pixels.
       if (!result.checks.symbolLayerPixelChangeObserved) {
-        throw new Error('Hiding navigational symbols did not change the chart canvas after enabling all point classes.');
-      }
-      if (pointScan.found && stableBefore.hash === stableAfter.hash) {
-        throw new Error(`MapLibre hit-tested a visible point symbol (${pointScan.feature?.properties?.cm93Class}), but hiding navigational symbols did not change the canvas.`);
+        throw new Error('Hiding navigational symbols did not change the chart canvas after the viewport-wide query found rendered point symbols.');
       }
     }
     result.layerIsolation.push({
