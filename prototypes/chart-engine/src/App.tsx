@@ -210,6 +210,10 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
       'text-size': ['interpolate', ['linear'], ['zoom'], 12, 9, 16, 12],
       'text-offset': [0, 1.1], 'text-anchor': 'top',
       'text-optional': true, 'text-max-width': 10,
+      // Chart text is the object itself, not an annotation competing with a
+      // point icon. Keep it eligible for placement even when nearby symbols
+      // or other labels occupy the same anchor area.
+      'text-allow-overlap': true, 'text-ignore-placement': true,
     },
     paint: { 'text-color': '#36566a', 'text-halo-color': '#f7f4e9', 'text-halo-width': 1.2 },
   });
