@@ -449,6 +449,15 @@ try {
       throw new Error(`Layer isolation state mismatch for ${layerCase.label}: expected ${visibilityKey}=${!before}.`);
     }
     await fs.writeFile(path.join(outputDir, `layer-diagnostics-${visibilityKey}.json`), JSON.stringify(hiddenLayerDiagnostics, null, 2));
+    if (layerCase.label === 'Feature labels') {
+      result.checks.featureLabelPixelChangeObserved = stableBefore.hash !== stableAfter.hash;
+      result.checks.featureLabelPixelChangeInterpretation = stableBefore.hash !== stableAfter.hash
+        ? 'Hiding feature labels changed visible chart pixels in the detailed viewport.'
+        : 'The feature-label visibility state changed, but no feature-label pixels were detected in the detailed viewport.';
+      if (!result.checks.featureLabelPixelChangeObserved) {
+        throw new Error('Hiding feature labels did not change the chart canvas in the detailed CM93 viewport.');
+      }
+    }
     if (layerCase.label === 'Navigational symbols') {
       result.checks.symbolLayerPixelChangeObserved = stableBefore.hash !== stableAfter.hash;
       result.checks.symbolLayerPixelChangeInterpretation = stableBefore.hash !== stableAfter.hash
