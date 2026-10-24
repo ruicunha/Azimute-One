@@ -206,7 +206,8 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
     filter: scale ? ['all', ['==', ['get', 'cm93Scale'], scale], ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]], ['==', ['get', 'cm93Class'], 'DEPCNT'], ['has', 'VALDCO']] : ['all', ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]], ['==', ['get', 'cm93Class'], 'DEPCNT'], ['has', 'VALDCO']],
     layout: {
       'symbol-placement': 'line',
-      'text-field': ['concat', ['to-string', ['get', 'VALDCO']], ' m'],
+      // CM93 stores these as float values; show S-57's 0.1 m resolution instead of the full IEEE-754 tail.
+      'text-field': ['concat', ['to-string', ['/', ['round', ['*', ['get', 'VALDCO'], 10]], 10]], ' m'],
       'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
       'text-size': 10, 'text-max-angle': 30, 'text-allow-overlap': false,
     },
