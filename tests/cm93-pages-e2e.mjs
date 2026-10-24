@@ -503,48 +503,27 @@ try {
   result.pointSymbolViewportScan = pointScan;
   result.checks.visiblePointFeatureFoundByRenderedHitTest = pointScan.found;
 
-  // A pixel delta proves the label layer contributes something, but the
-  // target-specific check below proves this exact _texta value is hit-testable
-  // in the feature-label layer, rather than a different label changing pixels.
-  const textLabelHitScan = {
+  // A viewport-wide MapLibre rendered-feature query proves this exact
+  // _texto feature was placed in the feature-label layer. Pointer hit-testing
+  // is unreliable for text because its screen box is offset from its point
+  // anchor, so do not require a click to land on the glyphs.
+  const renderedTextTarget = (result.textLabelTargetDiagnostics.renderedTextLabelSamples ?? []).find((feature) =>
+    feature.layer.includes('labels') &&
+    feature.text === textTarget.text &&
+    feature.scale === textTarget.scale &&
+    Array.isArray(feature.coordinates) &&
+    Math.abs(feature.coordinates[0] - textTarget.coordinates[0]) < 0.00001 &&
+    Math.abs(feature.coordinates[1] - textTarget.coordinates[1]) < 0.00001
+  );
+  result.renderedTextLabelTarget = renderedTextTarget ?? null;
+  result.checks.targetCm93TextLabelRendered = Boolean(renderedTextTarget);
+  result.textLabelHitScan = {
+    interpretation: 'Not used as a pass/fail condition: text hit boxes can be offset from point anchors. The viewport-wide MapLibre rendered-feature query is the placement assertion.',
     targetText: textTarget.text,
     targetCoordinates: textTarget.coordinates,
-    samples: 0,
-    found: false,
-    grid: { xOffsets: [-40, -20, 0, 20, 40], yOffsets: [10, 18, 26, 34] },
   };
-  const textAnchor = { x: mapPoint.x, y: mapPoint.y }; // The chosen _texto anchor was centered before layer isolation.
-  for (const yOffset of textLabelHitScan.grid.yOffsets) {
-    for (const xOffset of textLabelHitScan.grid.xOffsets) {
-      await page.evaluate(() => { window.__azimuteClipboardText = ''; });
-      await page.mouse.click(textAnchor.x + xOffset, textAnchor.y + yOffset);
-      try {
-        await page.waitForFunction(() => {
-          const text = window.__azimuteClipboardText;
-          return typeof text === 'string' && text.includes('"reportType": "Azimute One CM93 map-click diagnostic"');
-        }, { timeout: 1200 });
-      } catch {
-        continue;
-      }
-      textLabelHitScan.samples += 1;
-      const report = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
-      const targetLabel = (report.cm93?.renderedFeaturesAtClick ?? []).find((feature) =>
-        feature.layer.includes('labels') &&
-        feature.properties?.cm93Class === '_texto' &&
-        feature.properties?._texta === textTarget.text
-      );
-      if (targetLabel) {
-        textLabelHitScan.found = true;
-        textLabelHitScan.hit = { x: textAnchor.x + xOffset, y: textAnchor.y + yOffset, feature: targetLabel };
-        break;
-      }
-    }
-    if (textLabelHitScan.found) break;
-  }
-  result.textLabelHitScan = textLabelHitScan;
-  result.checks.targetCm93TextLabelHitTested = textLabelHitScan.found;
-  if (!textLabelHitScan.found) {
-    throw new Error(`The _texto point "${textTarget.text}" was centered, but its text was not hit-testable in a CM93 feature-label layer. The pixel-delta assertion alone is not sufficient.`);
+  if (!renderedTextTarget) {
+    throw new Error(`The _texto point "${textTarget.text}" was present in the quilt but not reported by MapLibre as rendered in a feature-label layer.`);
   }
 
   if (pointScan.found) {
