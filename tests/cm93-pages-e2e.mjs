@@ -285,34 +285,53 @@ try {
   await diagnosticsButton.click();
   await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 15000 });
   const textSourceDiagnostics = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
-  const viewportBounds = textSourceDiagnostics.viewport?.bounds;
   const textCandidates = (textSourceDiagnostics.textFeatureSamples ?? []).filter((feature) => {
     const coordinates = feature.coordinates;
-    if (!Array.isArray(coordinates) || coordinates.length < 2 || !feature.text?.trim()) return false;
-    const [longitude, latitude] = coordinates;
-    return Number.isFinite(longitude) && Number.isFinite(latitude)
-      && viewportBounds
-      && longitude >= viewportBounds.west && longitude <= viewportBounds.east
-      && latitude >= viewportBounds.south && latitude <= viewportBounds.north;
+    return Array.isArray(coordinates) && coordinates.length >= 2
+      && Number.isFinite(coordinates[0]) && Number.isFinite(coordinates[1])
+      && feature.text?.trim();
   });
+  const originalTextCenter = textSourceDiagnostics.viewport?.center;
   result.textLabelTargetDiscovery = {
     viewport: textSourceDiagnostics.viewport,
     sampledTextFeatureCount: (textSourceDiagnostics.textFeatureSamples ?? []).length,
-    inViewportCandidateCount: textCandidates.length,
+    availableCandidateCount: textCandidates.length,
     candidates: textCandidates.slice(0, 5),
   };
-  if (!textCandidates.length) {
-    throw new Error('No decoded CM93 _texto point with non-empty _texta was found inside the detailed viewport. Cannot validate feature-label rendering until a real text target is available.');
+  if (!textCandidates.length || !originalTextCenter) {
+    throw new Error('No decoded CM93 _texto point with non-empty _texta was found in the detailed quilt. Cannot validate feature-label rendering until a real text target is available.');
   }
+  const targetDistance = (feature) => {
+    const dx = (feature.coordinates[0] - originalTextCenter.longitude) * Math.cos(originalTextCenter.latitude * Math.PI / 180);
+    const dy = feature.coordinates[1] - originalTextCenter.latitude;
+    return dx * dx + dy * dy;
+  };
+  textCandidates.sort((a, b) => {
+    const scaleRank = (feature) => feature.scale === 'G' ? 0 : 1;
+    return scaleRank(a) - scaleRank(b) || targetDistance(a) - targetDistance(b);
+  });
   const textTarget = textCandidates[0];
-  const textCurrentCenter = textSourceDiagnostics.viewport.center;
-  const textTargetZoom = textSourceDiagnostics.viewport.zoom;
+
+  // At close zoom a nearby chart-text object can still be hundreds of pixels
+  // away. Zoom out temporarily so a real pointer drag can center it without
+  // moving the pointer outside the map canvas, then return to detailed scale.
+  await wheelZoom(180, 4);
+  await page.evaluate(() => { window.__azimuteClipboardText = ''; });
+  await diagnosticsButton.click();
+  await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 15000 });
+  const textPanStartDiagnostics = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
+  const textCurrentCenter = textPanStartDiagnostics.viewport?.center;
+  const textTargetZoom = textPanStartDiagnostics.viewport?.zoom;
+  if (!textCurrentCenter || typeof textTargetZoom !== 'number') {
+    throw new Error('Could not capture map center and zoom before centering the CM93 text target.');
+  }
   const textWorldPixels = 512 * (2 ** textTargetZoom);
   let textDragX = (textCurrentCenter.longitude - textTarget.coordinates[0]) / 360 * textWorldPixels;
   if (textDragX > textWorldPixels / 2) textDragX -= textWorldPixels;
   if (textDragX < -textWorldPixels / 2) textDragX += textWorldPixels;
   const textDragY = (mercatorY(textCurrentCenter.latitude) - mercatorY(textTarget.coordinates[1])) * textWorldPixels;
   await dragBy(textDragX, textDragY);
+  await wheelZoom(-180, 4);
   await page.waitForFunction(() => /Automatic CM93 detail:.*G-scale coverage quilt/.test(document.body.innerText), { timeout: 60000 });
   await page.waitForTimeout(1200);
   await page.evaluate(() => { window.__azimuteClipboardText = ''; });
