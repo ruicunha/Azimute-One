@@ -358,15 +358,30 @@ try {
   }
   result.checks.pointSymbolClassAvailable = true;
   result.checks.pointSymbolClassInitiallyUnchecked = !(await uwtrocCheckbox.isChecked());
-  await uwtrocCheckbox.check();
+
+  // Enable all point classes for the experiment. UWTROC is useful to track,
+  // but its global dataset count is not evidence that a UWTROC exists in this
+  // viewport; another navigational point type may be present here instead.
+  const pointClassCheckboxes = page.locator('.cm93-type-row input[type="checkbox"]');
+  const pointClassCount = await pointClassCheckboxes.count();
+  if (!pointClassCount) throw new Error('No CM93 point-class checkboxes were available for portrayal validation.');
+  let enabledPointClassCount = 0;
+  for (let index = 0; index < pointClassCount; index += 1) {
+    const checkbox = pointClassCheckboxes.nth(index);
+    if (!(await checkbox.isChecked())) {
+      await checkbox.check();
+      enabledPointClassCount += 1;
+    }
+  }
   await waitForStableCanvas();
   result.checks.pointSymbolClassEnabledForLayerIsolation = await uwtrocCheckbox.isChecked();
+  result.checks.allPointClassesEnabledForLayerIsolation = enabledPointClassCount === pointClassCount;
+  result.enabledPointClassCount = pointClassCount;
 
   // Dataset-wide class counts do not prove that a symbol is present in this
-  // viewport. Scan the actual map canvas for a rendered UWTROC feature before
-  // using canvas pixel changes as evidence for the symbol-layer toggle. Map
-  // click diagnostics are produced by the app itself and report only features
-  // MapLibre actually renders at the sampled pixel.
+  // viewport. Scan the actual map canvas for any rendered navigational point
+  // before using canvas pixel changes as evidence for the symbol-layer toggle.
+  // Map click diagnostics report only features MapLibre renders at that pixel.
   const pointScan = { attempted: true, samples: 0, found: false, sampleGrid: { columns: 11, rows: 7 } };
   const scanBounds = await mapCanvas.boundingBox();
   if (!scanBounds) throw new Error('MapLibre canvas was not visible for point-feature scan.');
@@ -391,7 +406,7 @@ try {
       const visiblePoint = features.find((feature) =>
         feature.geometry === 'Point' &&
         feature.layer.includes('icons') &&
-        feature.properties?.cm93Class === 'UWTROC'
+        typeof feature.properties?.cm93Class === 'string'
       );
       if (visiblePoint) {
         pointScan.found = true;
@@ -401,10 +416,10 @@ try {
     }
   }
   result.pointSymbolViewportScan = pointScan;
-  result.checks.visibleUwtrocFeatureFoundByRenderedHitTest = pointScan.found;
+  result.checks.visiblePointFeatureFoundByRenderedHitTest = pointScan.found;
   if (pointScan.found) {
     // A point hit-tested by MapLibre is a valid target for the subsequent
-    // pixel-difference assertion; the global dataset count alone is not.
+    // pixel-difference assertion; the global dataset counts alone are not.
     await waitForStableCanvas();
   }
 
@@ -439,6 +454,9 @@ try {
       result.checks.symbolLayerPixelChangeInterpretation = stableBefore.hash !== stableAfter.hash
         ? 'The symbol layer changed visible pixels in this viewport.'
         : 'The symbol-layer control state changed, but no visible symbol pixels were detected in this viewport; this is inconclusive, not a rendering failure.';
+      if (pointScan.found && stableBefore.hash === stableAfter.hash) {
+        throw new Error(`MapLibre hit-tested a visible point symbol (${pointScan.feature?.properties?.cm93Class}), but hiding navigational symbols did not change the canvas.`);
+      }
     }
     result.layerIsolation.push({
       layer: layerCase.label,
