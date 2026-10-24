@@ -369,28 +369,47 @@ async function build(request: Extract<RequestMessage, { type: 'build' }>) {
   const buildStartedAt = performance.now();
   const value = buildCm93CoverageQuiltFeatures(request.features, request.scale, request.engine);
   const geometryBuildMs = performance.now() - buildStartedAt;
-  const persistStartedAt = performance.now();
-  let serializedPayloadBytes: number | undefined;
-  let compressedPayloadBytes: number | undefined;
-  let serializeMs: number | undefined;
-  let compressMs: number | undefined;
-  let cacheCompression: 'gzip' | 'none' = 'none';
-  try {
-    const writeResult = await writeEntry(request.key, value);
-    if (writeResult.written) counters.writes++;
-    serializedPayloadBytes = writeResult.serializedPayloadBytes;
-    compressedPayloadBytes = writeResult.compressedPayloadBytes;
-    serializeMs = writeResult.serializeMs;
-    compressMs = writeResult.compressMs;
-    cacheCompression = writeResult.payloadEncoding === 'gzip' ? 'gzip' : 'none';
-  } catch {
-    counters.writeErrors++;
-  }
-  const persistMs = performance.now() - persistStartedAt;
-  let telemetry: CacheTelemetry | undefined;
-  const telemetryStartedAt = performance.now();
-  try { telemetry = await getTelemetry(); } catch { /* Stats are diagnostic only. */ }
-  return { value, cacheHit: false, telemetry, timings: { geometryBuildMs, persistMs, telemetryMs: performance.now() - telemetryStartedAt, serializedPayloadBytes, compressedPayloadBytes, serializeMs, compressMs, cacheCompression } };
+
+  // Return the quilt as soon as geometry is ready. JSON serialization,
+  // compression, IndexedDB writes and cache inventory are best-effort work;
+  // waiting for them before updating the map made a cold zoom pay the full
+  // cache-persistence cost even though the chart geometry was already built.
+  // Defer starting persistence to the next task so the build reply is posted
+  // first. Cache failures must never delay or prevent chart rendering.
+  setTimeout(() => {
+    void (async () => {
+      const persistStartedAt = performance.now();
+      let serializedPayloadBytes: number | undefined;
+      let compressedPayloadBytes: number | undefined;
+      let serializeMs: number | undefined;
+      let compressMs: number | undefined;
+      let cacheCompression: 'gzip' | 'none' = 'none';
+      try {
+        const writeResult = await writeEntry(request.key, value);
+        if (writeResult.written) counters.writes++;
+        serializedPayloadBytes = writeResult.serializedPayloadBytes;
+        compressedPayloadBytes = writeResult.compressedPayloadBytes;
+        serializeMs = writeResult.serializeMs;
+        compressMs = writeResult.compressMs;
+        cacheCompression = writeResult.payloadEncoding === 'gzip' ? 'gzip' : 'none';
+      } catch {
+        counters.writeErrors++;
+      }
+      const persistMs = performance.now() - persistStartedAt;
+      const telemetryStartedAt = performance.now();
+      let telemetry: CacheTelemetry | undefined;
+      try { telemetry = await getTelemetry(); } catch { /* Stats are diagnostic only. */ }
+      if (telemetry) {
+        workerScope.postMessage({
+          type: 'telemetry',
+          telemetry,
+          timings: { persistMs, telemetryMs: performance.now() - telemetryStartedAt, serializedPayloadBytes, compressedPayloadBytes, serializeMs, compressMs, cacheCompression },
+        });
+      }
+    })();
+  }, 0);
+
+  return { value, cacheHit: false, timings: { geometryBuildMs } };
 }
 
 const workerScope = self as unknown as {
