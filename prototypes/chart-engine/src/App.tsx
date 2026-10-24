@@ -187,12 +187,14 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
     id: prefix + '-labels' + suffix, type: 'symbol', source, minzoom: 12,
     // CM93 uses dedicated _texto point records for free-standing chart text.
     // Keep those visible independently of the navigational point-class switches.
-    filter: scale ? ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['any',
+    filter: scale ? ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['any',
+      // Dedicated chart-text records must remain eligible even when the decoder
+      // correlates them to a related point object and marks them as a child.
       ['==', ['get', 'cm93Class'], '_texto'],
-      ['all', ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
-    ]] : ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['any',
+      ['all', ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    ]] : ['all', ['==', ['geometry-type'], 'Point'], ['any',
       ['==', ['get', 'cm93Class'], '_texto'],
-      ['all', ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+      ['all', ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
     ]],
     layout: {
       'text-field': ['case',
