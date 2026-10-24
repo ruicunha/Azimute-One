@@ -276,6 +276,72 @@ try {
     throw new Error(`Repeated close-up did not reuse the processed quilt (cache source: ${closeupRepeat.performance?.quiltCacheSource ?? 'unknown'}).`);
   }
   result.zoomTransitions.push(closeupRepeat);
+
+  // Find an actual decoded _texto object in the current viewport quilt, pan
+  // directly to its coordinates, and make that object the center of the
+  // feature-label regression viewport. Dataset-wide counts alone are not proof
+  // that any text object is visible in the current map area.
+  await page.evaluate(() => { window.__azimuteClipboardText = ''; });
+  await diagnosticsButton.click();
+  await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 15000 });
+  const textSourceDiagnostics = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
+  const viewportBounds = textSourceDiagnostics.viewport?.bounds;
+  const textCandidates = (textSourceDiagnostics.textFeatureSamples ?? []).filter((feature) => {
+    const coordinates = feature.coordinates;
+    if (!Array.isArray(coordinates) || coordinates.length < 2 || !feature.text?.trim()) return false;
+    const [longitude, latitude] = coordinates;
+    return Number.isFinite(longitude) && Number.isFinite(latitude)
+      && viewportBounds
+      && longitude >= viewportBounds.west && longitude <= viewportBounds.east
+      && latitude >= viewportBounds.south && latitude <= viewportBounds.north;
+  });
+  result.textLabelTargetDiscovery = {
+    viewport: textSourceDiagnostics.viewport,
+    sampledTextFeatureCount: (textSourceDiagnostics.textFeatureSamples ?? []).length,
+    inViewportCandidateCount: textCandidates.length,
+    candidates: textCandidates.slice(0, 5),
+  };
+  if (!textCandidates.length) {
+    throw new Error('No decoded CM93 _texto point with non-empty _texta was found inside the detailed viewport. Cannot validate feature-label rendering until a real text target is available.');
+  }
+  const textTarget = textCandidates[0];
+  const textCurrentCenter = textSourceDiagnostics.viewport.center;
+  const textTargetZoom = textSourceDiagnostics.viewport.zoom;
+  const textWorldPixels = 512 * (2 ** textTargetZoom);
+  let textDragX = (textCurrentCenter.longitude - textTarget.coordinates[0]) / 360 * textWorldPixels;
+  if (textDragX > textWorldPixels / 2) textDragX -= textWorldPixels;
+  if (textDragX < -textWorldPixels / 2) textDragX += textWorldPixels;
+  const textDragY = (mercatorY(textCurrentCenter.latitude) - mercatorY(textTarget.coordinates[1])) * textWorldPixels;
+  await dragBy(textDragX, textDragY);
+  await page.waitForFunction(() => /Automatic CM93 detail:.*G-scale coverage quilt/.test(document.body.innerText), { timeout: 60000 });
+  await page.waitForTimeout(1200);
+  await page.evaluate(() => { window.__azimuteClipboardText = ''; });
+  await diagnosticsButton.click();
+  await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 15000 });
+  result.textLabelTargetDiagnostics = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
+  result.textLabelTarget = {
+    text: textTarget.text,
+    coordinates: textTarget.coordinates,
+    sourceCell: textTarget.sourceCell,
+    viewport: result.textLabelTargetDiagnostics.viewport,
+    scaleAndCellMix: result.textLabelTargetDiagnostics.performance?.targetScaleAndCellMix,
+    visibleTextSamplesAfterCentering: (result.textLabelTargetDiagnostics.textFeatureSamples ?? []).filter((feature) =>
+      feature.text === textTarget.text &&
+      Array.isArray(feature.coordinates) &&
+      Math.abs(feature.coordinates[0] - textTarget.coordinates[0]) < 0.00001 &&
+      Math.abs(feature.coordinates[1] - textTarget.coordinates[1]) < 0.00001
+    ).length,
+  };
+  if (!result.textLabelTargetDiagnostics.textFeatureSamples?.some((feature) => feature.text === textTarget.text)) {
+    throw new Error(`The chosen CM93 text target "${textTarget.text}" disappeared from the viewport quilt after centering; cannot perform a valid feature-label render assertion.`);
+  }
+  result.checks.realCm93TextTargetCentered = true;
+  await fs.writeFile(path.join(outputDir, 'cm93-text-label-target.json'), JSON.stringify({
+    discovery: result.textLabelTargetDiscovery,
+    target: result.textLabelTarget,
+    diagnostics: result.textLabelTargetDiagnostics,
+  }, null, 2));
+
   result.checks.zoomTransitionBenchmark = true;
   result.zoomTransitionComparison = {
     firstPass: {
