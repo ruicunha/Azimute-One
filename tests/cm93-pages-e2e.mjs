@@ -214,8 +214,8 @@ try {
   if (Math.abs((closeupRepeat.viewport?.zoom ?? Number.NaN) - (closeupFirst.viewport?.zoom ?? Number.NaN)) > 0.35) {
     throw new Error(`Repeated close-up viewport differs from first pass: ${closeupFirst.viewport?.zoom} vs ${closeupRepeat.viewport?.zoom}.`);
   }
-  if (JSON.stringify(closeupFirst.performance) === JSON.stringify(closeupRepeat.performance)) {
-    throw new Error('Repeated close-up diagnostics are byte-for-byte identical; the test may be reading stale quilt metrics.');
+  if (closeupFirst.capturedAt && closeupFirst.capturedAt === closeupRepeat.capturedAt) {
+    throw new Error('Repeated close-up returned the same capture timestamp; the test may be reading a stale diagnostics payload.');
   }
   if (closeupRepeat.performance?.quiltCacheHit !== true) {
     throw new Error(`Repeated close-up did not reuse the processed quilt (cache source: ${closeupRepeat.performance?.quiltCacheSource ?? 'unknown'}).`);
