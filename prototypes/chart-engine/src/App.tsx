@@ -161,7 +161,7 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
   });
   map.addLayer({
     id: prefix + '-icons' + suffix, type: 'symbol', source, minzoom: 3,
-    filter: scale ? ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]] : ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    filter: scale ? ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['!=', ['get', 'cm93Class'], '_texto'], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]] : ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['!=', ['get', 'cm93Class'], '_texto'], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
     layout: {
       'text-field': ['match', ['get', 'cm93Class'],
         'LIGHTS', '✦',
@@ -1267,7 +1267,13 @@ export default function App() {
       .map(([scale, count]) => scale + ':' + count)
       .join(', ');
     const pointCounts = new Map<string, number>();
-    for (const feature of quiltFeatures) { if (feature.geometry?.type === 'Point' || feature.geometry?.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } }
+    for (const feature of quiltFeatures) {
+      if (feature.properties?.cm93Class === '_texto') continue; // Chart text is portrayed by the label layer, not as a point symbol.
+      if (feature.geometry?.type === 'Point' || feature.geometry?.type === 'MultiPoint') {
+        const name = String(feature.properties?.cm93Class ?? 'UNKNOWN');
+        pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1));
+      }
+    }
     setCm93PointClassCounts([...pointCounts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count));
     const classCounts = new Map<string, { count: number; geometries: Set<string> }>();
     for (const feature of quiltFeatures) {
