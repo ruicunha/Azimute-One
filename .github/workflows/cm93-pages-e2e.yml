@@ -5,6 +5,9 @@ on:
     paths:
       - '.github/workflows/cm93-pages-e2e.yml'
       - 'tests/cm93-pages-e2e.mjs'
+      - 'prototypes/chart-engine/src/**'
+      - 'prototypes/chart-engine/package.json'
+      - 'prototypes/chart-engine/vite.config.ts'
   workflow_dispatch:
   workflow_run:
     workflows: ["Deploy chart-engine prototype to GitHub Pages"]
@@ -36,6 +39,22 @@ jobs:
           npm install --no-save playwright
           npx playwright install --with-deps chromium
 
+      - name: Build and start the PR chart engine locally
+        if: github.event_name == 'pull_request'
+        run: |
+          npm install --prefix prototypes/chart-engine
+          npm run build --prefix prototypes/chart-engine
+          (cd prototypes/chart-engine && npm run preview -- --host 127.0.0.1 > /tmp/azimute-vite-preview.log 2>&1 &)
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:4173/ > /dev/null; then
+              echo "Local chart-engine preview is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/azimute-vite-preview.log
+          exit 1
+
       - name: Download and extract CM93 sample dataset
         run: |
           mkdir -p /tmp/cm93-sample
@@ -54,7 +73,7 @@ jobs:
       - name: Test deployed GitHub Pages with Chromium
         env:
           CM93_DATASET_DIR: ${{ env.CM93_DATASET_DIR }}
-          AZIMUTE_PAGES_URL: https://ruicunha.github.io/Azimute-One/
+          AZIMUTE_PAGES_URL: ${{ github.event_name == 'pull_request' && 'http://127.0.0.1:4173/' || 'https://ruicunha.github.io/Azimute-One/' }}
         run: node tests/cm93-pages-e2e.mjs
 
       - name: Upload browser diagnostics

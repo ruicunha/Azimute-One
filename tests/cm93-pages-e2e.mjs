@@ -276,6 +276,91 @@ try {
     throw new Error(`Repeated close-up did not reuse the processed quilt (cache source: ${closeupRepeat.performance?.quiltCacheSource ?? 'unknown'}).`);
   }
   result.zoomTransitions.push(closeupRepeat);
+
+  // Find an actual decoded _texto object in the current viewport quilt, pan
+  // directly to its coordinates, and make that object the center of the
+  // feature-label regression viewport. Dataset-wide counts alone are not proof
+  // that any text object is visible in the current map area.
+  await page.evaluate(() => { window.__azimuteClipboardText = ''; });
+  await diagnosticsButton.click();
+  await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 15000 });
+  const textSourceDiagnostics = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
+  const textCandidates = (textSourceDiagnostics.textFeatureSamples ?? []).filter((feature) => {
+    const coordinates = feature.coordinates;
+    return Array.isArray(coordinates) && coordinates.length >= 2
+      && Number.isFinite(coordinates[0]) && Number.isFinite(coordinates[1])
+      && feature.text?.trim();
+  });
+  const originalTextCenter = textSourceDiagnostics.viewport?.center;
+  result.textLabelTargetDiscovery = {
+    viewport: textSourceDiagnostics.viewport,
+    sampledTextFeatureCount: (textSourceDiagnostics.textFeatureSamples ?? []).length,
+    availableCandidateCount: textCandidates.length,
+    candidates: textCandidates.slice(0, 5),
+  };
+  if (!textCandidates.length || !originalTextCenter) {
+    throw new Error('No decoded CM93 _texto point with non-empty _texta was found in the detailed quilt. Cannot validate feature-label rendering until a real text target is available.');
+  }
+  const targetDistance = (feature) => {
+    const dx = (feature.coordinates[0] - originalTextCenter.longitude) * Math.cos(originalTextCenter.latitude * Math.PI / 180);
+    const dy = feature.coordinates[1] - originalTextCenter.latitude;
+    return dx * dx + dy * dy;
+  };
+  textCandidates.sort((a, b) => {
+    const scaleRank = (feature) => feature.scale === 'G' ? 0 : 1;
+    return scaleRank(a) - scaleRank(b) || targetDistance(a) - targetDistance(b);
+  });
+  const textTarget = textCandidates[0];
+
+  // At close zoom a nearby chart-text object can still be hundreds of pixels
+  // away. Zoom out temporarily so a real pointer drag can center it without
+  // moving the pointer outside the map canvas, then return to detailed scale.
+  await wheelZoom(180, 4);
+  await page.evaluate(() => { window.__azimuteClipboardText = ''; });
+  await diagnosticsButton.click();
+  await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 15000 });
+  const textPanStartDiagnostics = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
+  const textCurrentCenter = textPanStartDiagnostics.viewport?.center;
+  const textTargetZoom = textPanStartDiagnostics.viewport?.zoom;
+  if (!textCurrentCenter || typeof textTargetZoom !== 'number') {
+    throw new Error('Could not capture map center and zoom before centering the CM93 text target.');
+  }
+  const textWorldPixels = 512 * (2 ** textTargetZoom);
+  let textDragX = (textCurrentCenter.longitude - textTarget.coordinates[0]) / 360 * textWorldPixels;
+  if (textDragX > textWorldPixels / 2) textDragX -= textWorldPixels;
+  if (textDragX < -textWorldPixels / 2) textDragX += textWorldPixels;
+  const textDragY = (mercatorY(textCurrentCenter.latitude) - mercatorY(textTarget.coordinates[1])) * textWorldPixels;
+  await dragBy(textDragX, textDragY);
+  await wheelZoom(-180, 4);
+  await page.waitForFunction(() => /Automatic CM93 detail:.*G-scale coverage quilt/.test(document.body.innerText), { timeout: 60000 });
+  await page.waitForTimeout(1200);
+  await page.evaluate(() => { window.__azimuteClipboardText = ''; });
+  await diagnosticsButton.click();
+  await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 15000 });
+  result.textLabelTargetDiagnostics = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
+  result.textLabelTarget = {
+    text: textTarget.text,
+    coordinates: textTarget.coordinates,
+    sourceCell: textTarget.sourceCell,
+    viewport: result.textLabelTargetDiagnostics.viewport,
+    scaleAndCellMix: result.textLabelTargetDiagnostics.performance?.targetScaleAndCellMix,
+    visibleTextSamplesAfterCentering: (result.textLabelTargetDiagnostics.textFeatureSamples ?? []).filter((feature) =>
+      feature.text === textTarget.text &&
+      Array.isArray(feature.coordinates) &&
+      Math.abs(feature.coordinates[0] - textTarget.coordinates[0]) < 0.00001 &&
+      Math.abs(feature.coordinates[1] - textTarget.coordinates[1]) < 0.00001
+    ).length,
+  };
+  if (!result.textLabelTargetDiagnostics.textFeatureSamples?.some((feature) => feature.text === textTarget.text)) {
+    throw new Error(`The chosen CM93 text target "${textTarget.text}" disappeared from the viewport quilt after centering; cannot perform a valid feature-label render assertion.`);
+  }
+  result.checks.realCm93TextTargetCentered = true;
+  await fs.writeFile(path.join(outputDir, 'cm93-text-label-target.json'), JSON.stringify({
+    discovery: result.textLabelTargetDiscovery,
+    target: result.textLabelTarget,
+    diagnostics: result.textLabelTargetDiagnostics,
+  }, null, 2));
+
   result.checks.zoomTransitionBenchmark = true;
   result.zoomTransitionComparison = {
     firstPass: {
@@ -417,6 +502,30 @@ try {
   }
   result.pointSymbolViewportScan = pointScan;
   result.checks.visiblePointFeatureFoundByRenderedHitTest = pointScan.found;
+
+  // A viewport-wide MapLibre rendered-feature query proves this exact
+  // _texto feature was placed in the feature-label layer. Pointer hit-testing
+  // is unreliable for text because its screen box is offset from its point
+  // anchor, so do not require a click to land on the glyphs.
+  const renderedTextTarget = (result.textLabelTargetDiagnostics.renderedTextLabelSamples ?? []).find((feature) =>
+    feature.layer.includes('labels') &&
+    feature.text === textTarget.text &&
+    feature.scale === textTarget.scale &&
+    Array.isArray(feature.coordinates) &&
+    Math.abs(feature.coordinates[0] - textTarget.coordinates[0]) < 0.00001 &&
+    Math.abs(feature.coordinates[1] - textTarget.coordinates[1]) < 0.00001
+  );
+  result.renderedTextLabelTarget = renderedTextTarget ?? null;
+  result.checks.targetCm93TextLabelRendered = Boolean(renderedTextTarget);
+  result.textLabelHitScan = {
+    interpretation: 'Not used as a pass/fail condition: text hit boxes can be offset from point anchors. The viewport-wide MapLibre rendered-feature query is the placement assertion.',
+    targetText: textTarget.text,
+    targetCoordinates: textTarget.coordinates,
+  };
+  if (!renderedTextTarget) {
+    throw new Error(`The _texto point "${textTarget.text}" was present in the quilt but not reported by MapLibre as rendered in a feature-label layer.`);
+  }
+
   if (pointScan.found) {
     // A point hit-tested by MapLibre is a valid target for the subsequent
     // pixel-difference assertion; the global dataset counts alone are not.
@@ -449,6 +558,18 @@ try {
       throw new Error(`Layer isolation state mismatch for ${layerCase.label}: expected ${visibilityKey}=${!before}.`);
     }
     await fs.writeFile(path.join(outputDir, `layer-diagnostics-${visibilityKey}.json`), JSON.stringify(hiddenLayerDiagnostics, null, 2));
+    if (layerCase.label === 'Feature labels') {
+      result.checks.featureLabelPixelChangeObserved = stableBefore.hash !== stableAfter.hash;
+      result.checks.featureLabelPixelChangeInterpretation = stableBefore.hash !== stableAfter.hash
+        ? 'Hiding feature labels changed visible pixels with a real CM93 _texto object centered in the detailed viewport.'
+        : 'A decoded _texto object was centered in the detailed viewport, but hiding feature labels did not change the canvas.';
+      if (!result.checks.realCm93TextTargetCentered) {
+        throw new Error('Feature-label pixel assertion ran without a confirmed CM93 _texto target.');
+      }
+      if (!result.checks.featureLabelPixelChangeObserved) {
+        throw new Error('Hiding feature labels did not change the canvas with a real CM93 _texto object centered in the viewport.');
+      }
+    }
     if (layerCase.label === 'Navigational symbols') {
       result.checks.symbolLayerPixelChangeObserved = stableBefore.hash !== stableAfter.hash;
       result.checks.symbolLayerPixelChangeInterpretation = stableBefore.hash !== stableAfter.hash

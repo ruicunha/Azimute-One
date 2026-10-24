@@ -161,7 +161,7 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
   });
   map.addLayer({
     id: prefix + '-icons' + suffix, type: 'symbol', source, minzoom: 3,
-    filter: scale ? ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]] : ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    filter: scale ? ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['!=', ['get', 'cm93Class'], '_texto'], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]] : ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['!=', ['get', 'cm93Class'], '_texto'], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
     layout: {
       'text-field': ['match', ['get', 'cm93Class'],
         'LIGHTS', '✦',
@@ -187,12 +187,14 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
     id: prefix + '-labels' + suffix, type: 'symbol', source, minzoom: 12,
     // CM93 uses dedicated _texto point records for free-standing chart text.
     // Keep those visible independently of the navigational point-class switches.
-    filter: scale ? ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['any',
+    filter: scale ? ['all', ['==', ['get', 'cm93Scale'], scale], ['==', ['geometry-type'], 'Point'], ['any',
+      // Dedicated chart-text records must remain eligible even when the decoder
+      // correlates them to a related point object and marks them as a child.
       ['==', ['get', 'cm93Class'], '_texto'],
-      ['all', ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
-    ]] : ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'cm93RelatedChild'], true], ['any',
+      ['all', ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+    ]] : ['all', ['==', ['geometry-type'], 'Point'], ['any',
       ['==', ['get', 'cm93Class'], '_texto'],
-      ['all', ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
+      ['all', ['!=', ['get', 'cm93RelatedChild'], true], ['in', ['get', 'cm93Class'], ['literal', cm93PointLabelClasses]], ['in', ['get', 'cm93Class'], ['literal', visiblePointClasses]]],
     ]],
     layout: {
       'text-field': ['case',
@@ -210,6 +212,10 @@ function addCm93PortrayalLayers(map: MapLibreMap, source: string, prefix: string
       'text-size': ['interpolate', ['linear'], ['zoom'], 12, 9, 16, 12],
       'text-offset': [0, 1.1], 'text-anchor': 'top',
       'text-optional': true, 'text-max-width': 10,
+      // Chart text is the object itself, not an annotation competing with a
+      // point icon. Keep it eligible for placement even when nearby symbols
+      // or other labels occupy the same anchor area.
+      'text-allow-overlap': true, 'text-ignore-placement': true,
     },
     paint: { 'text-color': '#36566a', 'text-halo-color': '#f7f4e9', 'text-halo-width': 1.2 },
   });
@@ -423,7 +429,7 @@ export default function App() {
           const usefulKeys = [
             'cm93Class', 'cm93SourceCell', 'cm93RelatedChild', 'cm93DetailLabel',
             'OBJNAM', 'OBJL', 'VALNMR', 'VALDCO', 'DRVAL1', 'DRVAL2',
-            'COLOUR', 'CATLIT', 'LITCHR', 'SIGPER', 'STATUS', 'QUASOU',
+            '_texta', 'COLOUR', 'CATLIT', 'LITCHR', 'SIGPER', 'STATUS', 'QUASOU',
           ];
           return {
             layer: feature.layer.id,
@@ -1267,7 +1273,13 @@ export default function App() {
       .map(([scale, count]) => scale + ':' + count)
       .join(', ');
     const pointCounts = new Map<string, number>();
-    for (const feature of quiltFeatures) { if (feature.geometry?.type === 'Point' || feature.geometry?.type === 'MultiPoint') { const name = String(feature.properties?.cm93Class ?? 'UNKNOWN'); pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1)); } }
+    for (const feature of quiltFeatures) {
+      if (feature.properties?.cm93Class === '_texto') continue; // Chart text is portrayed by the label layer, not as a point symbol.
+      if (feature.geometry?.type === 'Point' || feature.geometry?.type === 'MultiPoint') {
+        const name = String(feature.properties?.cm93Class ?? 'UNKNOWN');
+        pointCounts.set(name, (pointCounts.get(name) ?? 0) + (feature.geometry.type === 'MultiPoint' ? feature.geometry.coordinates.length : 1));
+      }
+    }
     setCm93PointClassCounts([...pointCounts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count));
     const classCounts = new Map<string, { count: number; geometries: Set<string> }>();
     for (const feature of quiltFeatures) {
@@ -1626,6 +1638,37 @@ export default function App() {
                   scales: cm93Summary.scales.map(({ code, fileCount }) => ({ code, fileCount })),
                 } : null,
                 lastMapClickDiagnostic: clickReport,
+                // Small, viewport-local sample for validating real CM93 chart-text
+                // objects. This is intentionally diagnostic-only; it avoids treating
+                // dataset-wide _texto counts as proof that text is visible here.
+                textFeatureSamples: cm93RenderedFeaturesRef.current
+                  .flatMap((feature) => {
+                    if (feature.properties?.cm93Class !== '_texto' || feature.geometry.type !== 'Point') return [];
+                    return [{
+                      coordinates: feature.geometry.coordinates,
+                      text: String(feature.properties?._texta ?? feature.properties?._TEXTA ?? ''),
+                      scale: feature.properties?.cm93Scale ?? null,
+                      sourceCell: feature.properties?.cm93SourceCell ?? null,
+                      relatedChild: feature.properties?.cm93RelatedChild === true,
+                      relatedObjectIndexes: feature.properties?.cm93RelatedObjectIndexes ?? [],
+                    }];
+                  })
+                  .filter((feature) => feature.text.trim().length > 0)
+                  .slice(0, 50),
+                // MapLibre's rendered-feature query is the ground truth for
+                // whether text symbols were placed, unlike source/quilt counts.
+                renderedTextLabelSamples: map ? map.queryRenderedFeatures({
+                  layers: cm93Scales.map((scale) => 'cm93-quilt-labels' + (scale === 'Z' ? '' : '-' + scale))
+                    .filter((id) => Boolean(map.getLayer(id))),
+                }).filter((feature) => feature.properties?.cm93Class === '_texto')
+                  .slice(0, 30)
+                  .map((feature) => ({
+                    layer: feature.layer.id,
+                    text: String(feature.properties?._texta ?? feature.properties?._TEXTA ?? ''),
+                    scale: feature.properties?.cm93Scale ?? null,
+                    relatedChild: feature.properties?.cm93RelatedChild === true,
+                    coordinates: feature.geometry.type === 'Point' ? feature.geometry.coordinates : null,
+                  })) : [],
                 testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. quiltCacheHit and quiltCacheSource identify whether the latest update reused memory, IndexedDB, or rebuilt the quilt. On cache hits, geometryMetrics are from the original cached build and are not work repeated by this render. quiltMs includes cache retrieval and preparation of the returned GeoJSON for MapLibre. MapLibre timings are measured from source update. mapFirstRenderMs is the first general render; sourceDataMs is the first source-content event; mapFirstRenderAfterSourceMs is the first render after content; sourceLoadedMs is the first isSourceLoaded event; mapRenderMs is idle; sourceLoadedToIdleMs measures loaded-to-idle. These are lifecycle timings, not pure GPU durations. Toggle one layer category at a time, repeat the same warm-cache viewport, and compare post-content render and loaded-to-idle timings. Include zoom-transition runs.',
               };
               void navigator.clipboard?.writeText(JSON.stringify(report, null, 2)).then(() => {
