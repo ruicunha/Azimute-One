@@ -203,24 +203,38 @@ try {
     throw new Error('Overview diagnostics did not include the map center and zoom needed for chart-rich navigation.');
   }
   const target = await findDetailedCm93Target(datasetDir);
+  // At overview zoom a one-pixel drag can move the center by a substantial
+  // fraction of a G-scale cell. Aim slightly south of its center to compensate
+  // for the repeatable wheel-anchor drift, then apply a measured correction.
+  const panTarget = { longitude: target.longitude, latitude: target.latitude - 0.12 };
   const worldPixels = 512 * (2 ** overviewZoom);
-  let longitudeDelta = target.longitude - currentCenter.longitude;
+  let longitudeDelta = panTarget.longitude - currentCenter.longitude;
   if (longitudeDelta > 180) longitudeDelta -= 360;
   if (longitudeDelta < -180) longitudeDelta += 360;
   const dragX = -longitudeDelta / 360 * worldPixels;
-  const dragY = (mercatorY(currentCenter.latitude) - mercatorY(target.latitude)) * worldPixels;
+  const dragY = (mercatorY(currentCenter.latitude) - mercatorY(panTarget.latitude)) * worldPixels;
   const dragStart = { x: canvasBounds.x + canvasBounds.width / 2, y: canvasBounds.y + canvasBounds.height / 2 };
-  await page.mouse.move(dragStart.x, dragStart.y);
-  await page.mouse.down();
-  await page.mouse.move(dragStart.x + dragX, dragStart.y + dragY, { steps: 12 });
-  await page.mouse.up();
-  await page.waitForTimeout(1000);
-  const chartArea = await captureDiagnostics('chart-area-before-zoom');
-  const chartCenter = chartArea.viewport?.center;
-  if (!chartCenter || Math.abs(chartCenter.longitude - target.longitude) > 3 || Math.abs(chartCenter.latitude - target.latitude) > 3) {
-    throw new Error(`Could not center chart-rich viewport near Boston: expected ${target.latitude},${target.longitude}; got ${chartCenter?.latitude},${chartCenter?.longitude}.`);
+  const dragBy = async (dx, dy) => {
+    await page.mouse.move(dragStart.x, dragStart.y);
+    await page.mouse.down();
+    await page.mouse.move(dragStart.x + dx, dragStart.y + dy, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+  };
+  await dragBy(dragX, dragY);
+  let chartArea = await captureDiagnostics('chart-area-before-zoom');
+  let chartCenter = chartArea.viewport?.center;
+  if (!chartCenter) throw new Error('Chart-area diagnostics did not include the viewport center.');
+  let correctionX = (chartCenter.longitude - target.longitude) / 360 * worldPixels;
+  if (correctionX > worldPixels / 2) correctionX -= worldPixels;
+  if (correctionX < -worldPixels / 2) correctionX += worldPixels;
+  const correctionY = (mercatorY(chartCenter.latitude) - mercatorY(panTarget.latitude)) * worldPixels;
+  if (Math.abs(correctionX) > 0.15 || Math.abs(correctionY) > 0.15) {
+    await dragBy(correctionX, correctionY);
+    chartArea = await captureDiagnostics('chart-area-after-correction');
+    chartCenter = chartArea.viewport?.center;
   }
-  result.chartRichViewport = { target, actualCenter: chartCenter, overviewZoom };
+  result.chartRichViewport = { target, panTarget, actualCenter: chartCenter, overviewZoom };
 
   // Labels and depth contours have higher minimum zooms, so make the benchmark
   // a genuine close-up rather than assuming 18 wheel events are sufficient.
@@ -229,8 +243,8 @@ try {
   if ((closeupFirst.viewport?.zoom ?? overviewZoom) < 15.5) {
     throw new Error(`Detailed benchmark did not reach G-scale portrayal: overview ${overviewZoom}, close-up ${closeupFirst.viewport?.zoom}.`);
   }
-  if ((closeupFirst.performance?.viewportCellCount ?? 0) < 1) {
-    throw new Error(`Selected G-scale cell ${target.cellPath} but the detailed viewport selected no CM93 cells.`);
+  if ((closeupFirst.performance?.viewportCellCount ?? 0) < 1 || !/\\bG:\\d+/.test(closeupFirst.performance?.targetScaleAndCellMix ?? '')) {
+    throw new Error(`The detailed viewport did not select its actual G-scale cell ${target.cellPath}: ${closeupFirst.performance?.targetScaleAndCellMix ?? 'no scale mix'}, ${closeupFirst.performance?.viewportCellCount ?? 0} cells.`);
   }
   result.zoomTransitions.push(closeupFirst);
 
