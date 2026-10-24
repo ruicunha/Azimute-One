@@ -214,6 +214,22 @@ try {
   };
   await page.screenshot({ path: path.join(outputDir, 'zoom-transition-closeup.png'), fullPage: true });
 
+  // Capture a real map-click report at the close-up viewport. This report
+  // identifies the clicked coordinates and the CM93 cells/coverage selected
+  // there, which helps distinguish sparse chart data from a rendering defect.
+  await hoverMap();
+  await page.mouse.click(mapPoint.x, mapPoint.y);
+  await page.getByText('Last click report ready. Click another point to replace it with fresh diagnostics.', { exact: true }).waitFor({ timeout: 30000 });
+  await page.evaluate(() => { window.__azimuteClipboardText = ''; });
+  await page.getByRole('button', { name: 'Copy last map-click debug', exact: true }).click();
+  await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 15000 });
+  result.mapClickDiagnostics = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
+  if (result.mapClickDiagnostics?.reportType !== 'Azimute One CM93 map-click diagnostic') {
+    throw new Error('Map click did not produce the expected structured CM93 diagnostic report.');
+  }
+  result.checks.mapClickDiagnosticsAvailable = true;
+  await fs.writeFile(path.join(outputDir, 'closeup-map-click.json'), JSON.stringify(result.mapClickDiagnostics, null, 2));
+
   // Layer-isolation smoke experiment: keep the same loaded viewport and
   // toggle one portrayal category at a time. Record interaction-to-screenshot
   // wall time as a responsiveness proxy (not as a pure MapLibre/GPU metric).
@@ -233,11 +249,31 @@ try {
     await checkbox.setChecked(!before);
     await page.waitForTimeout(500);
     await page.screenshot({ path: path.join(outputDir, layerCase.file), fullPage: false });
+    // Record the app's structured diagnostics while the category is hidden.
+    // These timings still describe the last source update, not a pure layer
+    // toggle render, but the visibility flags prove which portrayal was tested.
+    await page.evaluate(() => { window.__azimuteClipboardText = ''; });
+    await diagnosticsButton.click();
+    await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 15000 });
+    const hiddenLayerDiagnostics = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
+    const visibilityKey = ({
+      'Area fills': 'fills',
+      'Lines (coastlines, contours, structures)': 'lines',
+      'Navigational symbols': 'symbols',
+      'Feature labels': 'labels',
+      'Depth contour labels': 'depthLabels',
+    })[layerCase.label];
+    if (hiddenLayerDiagnostics.performance?.renderLayerVisibility?.[visibilityKey] !== !before) {
+      throw new Error(`Layer isolation state mismatch for ${layerCase.label}: expected ${visibilityKey}=${!before}.`);
+    }
+    await fs.writeFile(path.join(outputDir, `layer-diagnostics-${visibilityKey}.json`), JSON.stringify(hiddenLayerDiagnostics, null, 2));
     result.layerIsolation.push({
       layer: layerCase.label,
+      visibilityKey,
       toggledOff: before,
+      renderLayerVisibility: hiddenLayerDiagnostics.performance.renderLayerVisibility,
       interactionToScreenshotMs: Date.now() - startedAt,
-      note: 'Responsiveness proxy only; not an isolated MapLibre/GPU render duration.',
+      note: 'Visibility state is validated. Interaction-to-screenshot is a responsiveness proxy, not an isolated MapLibre/GPU render duration.',
     });
     await checkbox.setChecked(before);
     await page.waitForTimeout(250);
