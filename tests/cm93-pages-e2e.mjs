@@ -509,11 +509,7 @@ try {
     throw new Error(`The _texto point "${textTarget.text}" was present in the quilt but not reported by MapLibre as rendered in a feature-label layer.`);
   }
 
-  if (pointScan.found) {
-    // A point hit-tested by MapLibre is a valid target for the subsequent
-    // pixel-difference assertion; the global dataset counts alone are not.
-    await waitForStableCanvas();
-  }
+  await waitForStableCanvas();
 
   for (const layerCase of layerCases) {
     const checkbox = page.getByRole('checkbox', { name: layerCase.label, exact: true });
