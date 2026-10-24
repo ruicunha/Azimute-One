@@ -502,6 +502,51 @@ try {
   }
   result.pointSymbolViewportScan = pointScan;
   result.checks.visiblePointFeatureFoundByRenderedHitTest = pointScan.found;
+
+  // A pixel delta proves the label layer contributes something, but the
+  // target-specific check below proves this exact _texta value is hit-testable
+  // in the feature-label layer, rather than a different label changing pixels.
+  const textLabelHitScan = {
+    targetText: textTarget.text,
+    targetCoordinates: textTarget.coordinates,
+    samples: 0,
+    found: false,
+    grid: { xOffsets: [-40, -20, 0, 20, 40], yOffsets: [10, 18, 26, 34] },
+  };
+  const textAnchor = pointScan.location ?? { x: mapPoint.x, y: mapPoint.y };
+  for (const yOffset of textLabelHitScan.grid.yOffsets) {
+    for (const xOffset of textLabelHitScan.grid.xOffsets) {
+      await page.evaluate(() => { window.__azimuteClipboardText = ''; });
+      await page.mouse.click(textAnchor.x + xOffset, textAnchor.y + yOffset);
+      try {
+        await page.waitForFunction(() => {
+          const text = window.__azimuteClipboardText;
+          return typeof text === 'string' && text.includes('"reportType": "Azimute One CM93 map-click diagnostic"');
+        }, { timeout: 1200 });
+      } catch {
+        continue;
+      }
+      textLabelHitScan.samples += 1;
+      const report = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
+      const targetLabel = (report.cm93?.renderedFeaturesAtClick ?? []).find((feature) =>
+        feature.layer.includes('labels') &&
+        feature.properties?.cm93Class === '_texto' &&
+        feature.properties?._texta === textTarget.text
+      );
+      if (targetLabel) {
+        textLabelHitScan.found = true;
+        textLabelHitScan.hit = { x: textAnchor.x + xOffset, y: textAnchor.y + yOffset, feature: targetLabel };
+        break;
+      }
+    }
+    if (textLabelHitScan.found) break;
+  }
+  result.textLabelHitScan = textLabelHitScan;
+  result.checks.targetCm93TextLabelHitTested = textLabelHitScan.found;
+  if (!textLabelHitScan.found) {
+    throw new Error(`The _texto point "${textTarget.text}" was centered, but its text was not hit-testable in a CM93 feature-label layer. The pixel-delta assertion alone is not sufficient.`);
+  }
+
   if (pointScan.found) {
     // A point hit-tested by MapLibre is a valid target for the subsequent
     // pixel-difference assertion; the global dataset counts alone are not.
