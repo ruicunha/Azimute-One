@@ -1297,10 +1297,26 @@ export default function App() {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !cm93AutoEnabled) return;
-    const sync = () => void syncCm93Quilt();
+    // A centered wheel zoom can change scale without changing the camera
+    // center. Listen to zoomend as well as moveend so the CM93 cell selection
+    // follows zoom-only navigation, and debounce the paired events to avoid
+    // starting duplicate decode/quilt work for one gesture.
+    let syncTimer: ReturnType<typeof setTimeout> | undefined;
+    const sync = () => {
+      if (syncTimer !== undefined) clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => {
+        syncTimer = undefined;
+        void syncCm93Quilt();
+      }, 40);
+    };
     map.on('moveend', sync);
+    map.on('zoomend', sync);
     sync();
-    return () => { map.off('moveend', sync); };
+    return () => {
+      map.off('moveend', sync);
+      map.off('zoomend', sync);
+      if (syncTimer !== undefined) clearTimeout(syncTimer);
+    };
   }, [cm93AutoEnabled, syncCm93Quilt]);
 
   const runCm93CameraBenchmark = async () => {
