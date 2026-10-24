@@ -463,45 +463,28 @@ try {
   result.checks.allPointClassesEnabledForLayerIsolation = enabledPointClassCount === pointClassCount;
   result.enabledPointClassCount = pointClassCount;
 
-  // Dataset-wide class counts do not prove that a symbol is present in this
-  // viewport. Scan the actual map canvas for any rendered navigational point
-  // before using canvas pixel changes as evidence for the symbol-layer toggle.
-  // Map click diagnostics report only features MapLibre renders at that pixel.
-  const pointScan = { attempted: true, samples: 0, found: false, sampleGrid: { columns: 11, rows: 7 } };
-  const scanBounds = await mapCanvas.boundingBox();
-  if (!scanBounds) throw new Error('MapLibre canvas was not visible for point-feature scan.');
-  for (let row = 0; row < pointScan.sampleGrid.rows && !pointScan.found; row += 1) {
-    for (let column = 0; column < pointScan.sampleGrid.columns && !pointScan.found; column += 1) {
-      const x = scanBounds.x + scanBounds.width * (0.06 + 0.88 * column / (pointScan.sampleGrid.columns - 1));
-      const y = scanBounds.y + scanBounds.height * (0.06 + 0.88 * row / (pointScan.sampleGrid.rows - 1));
-      await page.evaluate(() => { window.__azimuteClipboardText = ''; });
-      await page.mouse.click(x, y);
-      try {
-        await page.waitForFunction(() => {
-          const text = window.__azimuteClipboardText;
-          return typeof text === 'string' && text.includes('"reportType": "Azimute One CM93 map-click diagnostic"');
-        }, { timeout: 1200 });
-      } catch {
-        // A click can land on a map overlay/control rather than the map canvas.
-        continue;
-      }
-      pointScan.samples += 1;
-      const report = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
-      const features = report.cm93?.renderedFeaturesAtClick ?? [];
-      const visiblePoint = features.find((feature) =>
-        feature.geometry === 'Point' &&
-        feature.layer.includes('icons') &&
-        typeof feature.properties?.cm93Class === 'string'
-      );
-      if (visiblePoint) {
-        pointScan.found = true;
-        pointScan.location = { x, y, click: report.click };
-        pointScan.feature = visiblePoint;
-      }
-    }
+  // Query all visible point-symbol features in the viewport. Sparse pointer
+  // sampling can miss small symbols even when MapLibre has placed them, so the
+  // viewport-wide rendered-feature query is the primary presence check.
+  await page.evaluate(() => { window.__azimuteClipboardText = ''; });
+  await diagnosticsButton.click();
+  await page.waitForFunction(() => {
+    const text = window.__azimuteClipboardText;
+    return typeof text === 'string' && text.includes('"reportType": "Azimute One CM93 performance diagnostics"');
+  }, { timeout: 15000 });
+  const symbolDiagnostics = JSON.parse(await page.evaluate(() => window.__azimuteClipboardText));
+  const renderedPointSymbolSamples = symbolDiagnostics.renderedPointSymbolSamples ?? [];
+  result.renderedPointSymbolSamples = renderedPointSymbolSamples;
+  result.pointSymbolViewportScan = {
+    method: 'MapLibre viewport-wide rendered-feature query',
+    found: renderedPointSymbolSamples.length > 0,
+    sampleCount: renderedPointSymbolSamples.length,
+    samples: renderedPointSymbolSamples.slice(0, 10),
+  };
+  result.checks.visiblePointFeatureFoundByViewportQuery = renderedPointSymbolSamples.length > 0;
+  if (!renderedPointSymbolSamples.length) {
+    throw new Error('No navigational point-symbol feature was reported by MapLibre in the detailed viewport after enabling all point classes.');
   }
-  result.pointSymbolViewportScan = pointScan;
-  result.checks.visiblePointFeatureFoundByRenderedHitTest = pointScan.found;
 
   // A viewport-wide MapLibre rendered-feature query proves this exact
   // _texto feature was placed in the feature-label layer. Pointer hit-testing
@@ -526,11 +509,7 @@ try {
     throw new Error(`The _texto point "${textTarget.text}" was present in the quilt but not reported by MapLibre as rendered in a feature-label layer.`);
   }
 
-  if (pointScan.found) {
-    // A point hit-tested by MapLibre is a valid target for the subsequent
-    // pixel-difference assertion; the global dataset counts alone are not.
-    await waitForStableCanvas();
-  }
+  await waitForStableCanvas();
 
   for (const layerCase of layerCases) {
     const checkbox = page.getByRole('checkbox', { name: layerCase.label, exact: true });
@@ -573,19 +552,12 @@ try {
     if (layerCase.label === 'Navigational symbols') {
       result.checks.symbolLayerPixelChangeObserved = stableBefore.hash !== stableAfter.hash;
       result.checks.symbolLayerPixelChangeInterpretation = stableBefore.hash !== stableAfter.hash
-        ? (pointScan.found
-          ? `The symbol layer changed visible pixels; MapLibre also hit-tested a ${pointScan.feature?.properties?.cm93Class} point.`
-          : 'The symbol layer changed visible pixels. The click grid did not intersect a point feature, so point hit-testing is inconclusive but the canvas delta confirms the layer contributes pixels.')
-        : 'The symbol-layer control state changed, but no visible symbol pixels were detected in this viewport; this is inconclusive, not a rendering failure.';
-      // With every available point class enabled, this chart-rich viewport
-      // previously showed a repeatable canvas delta when the symbol layer was
-      // hidden. Keep that as a regression assertion; the click grid is only
-      // supplemental because small point symbols are easy to miss between samples.
+        ? `The symbol layer changed visible pixels; the viewport-wide query found ${renderedPointSymbolSamples.length} rendered point symbols (for example, ${renderedPointSymbolSamples[0]?.class}).`
+        : 'The symbol-layer control state changed, but no visible symbol pixels were detected in this viewport.';
+      // The viewport-wide rendered-feature query proves the viewport contains
+      // actual placed point symbols; hiding the layer must change canvas pixels.
       if (!result.checks.symbolLayerPixelChangeObserved) {
-        throw new Error('Hiding navigational symbols did not change the chart canvas after enabling all point classes.');
-      }
-      if (pointScan.found && stableBefore.hash === stableAfter.hash) {
-        throw new Error(`MapLibre hit-tested a visible point symbol (${pointScan.feature?.properties?.cm93Class}), but hiding navigational symbols did not change the canvas.`);
+        throw new Error('Hiding navigational symbols did not change the chart canvas after the viewport-wide query found rendered point symbols.');
       }
     }
     result.layerIsolation.push({
