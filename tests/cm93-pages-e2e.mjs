@@ -250,7 +250,7 @@ try {
   if ((closeupFirst.viewport?.zoom ?? overviewZoom) < 15.5) {
     throw new Error(`Detailed benchmark did not reach G-scale portrayal: overview ${overviewZoom}, close-up ${closeupFirst.viewport?.zoom}.`);
   }
-  if ((closeupFirst.performance?.viewportCellCount ?? 0) < 1 || !/\\bG:\\d+/.test(closeupFirst.performance?.targetScaleAndCellMix ?? '')) {
+  if ((closeupFirst.performance?.viewportCellCount ?? 0) < 1 || !/\bG:\d+/.test(closeupFirst.performance?.targetScaleAndCellMix ?? '')) {
     throw new Error(`The detailed viewport did not select its actual G-scale cell ${target.cellPath}: ${closeupFirst.performance?.targetScaleAndCellMix ?? 'no scale mix'}, ${closeupFirst.performance?.viewportCellCount ?? 0} cells.`);
   }
   result.zoomTransitions.push(closeupFirst);
