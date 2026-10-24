@@ -147,11 +147,11 @@ try {
   result.zoomTransitions.push(await captureDiagnostics('overview-before-zoom'));
   const overviewZoom = result.zoomTransitions[0].viewport?.zoom;
 
-  // captureDiagnostics clicks a sidebar button, moving the mouse away from
-  // the map. Re-hover before EVERY wheel sequence; otherwise later wheel events
-  // are delivered to the sidebar and the test silently captures stale metrics.
-  // Use enough increments to reach a meaningful close-up rather than another
-  // world/continent overview, while avoiding browser wheel-event coalescing.
+  // The overview can be centered over open ocean, where labels and depth
+  // contours correctly have no pixels to render. Pan to Boston, a chart-rich
+  // location in the bundled CM93 sample, before measuring portrayal layers.
+  // MapLibre's Web Mercator world-pixel transform lets the test move the map
+  // through real pointer input without reaching into application internals.
   const hoverMap = async () => {
     await mapCanvas.hover({ position: { x: canvasBounds.width / 2, y: canvasBounds.height / 2 } });
   };
@@ -163,23 +163,53 @@ try {
     }
     await page.waitForTimeout(1500);
   };
-  await wheelZoom(-180, 18);
+  const mercatorY = (latitude) => {
+    const radians = latitude * Math.PI / 180;
+    return (1 - Math.log(Math.tan(radians) + 1 / Math.cos(radians)) / Math.PI) / 2;
+  };
+  const currentCenter = result.zoomTransitions[0].viewport?.center;
+  if (!currentCenter || typeof overviewZoom !== 'number') {
+    throw new Error('Overview diagnostics did not include the map center and zoom needed for chart-rich navigation.');
+  }
+  const target = { longitude: -71.06, latitude: 42.36 };
+  const worldPixels = 512 * (2 ** overviewZoom);
+  let longitudeDelta = target.longitude - currentCenter.longitude;
+  if (longitudeDelta > 180) longitudeDelta -= 360;
+  if (longitudeDelta < -180) longitudeDelta += 360;
+  const dragX = -longitudeDelta / 360 * worldPixels;
+  const dragY = (mercatorY(target.latitude) - mercatorY(currentCenter.latitude)) * worldPixels;
+  const dragStart = { x: canvasBounds.x + canvasBounds.width / 2, y: canvasBounds.y + canvasBounds.height / 2 };
+  await page.mouse.move(dragStart.x, dragStart.y);
+  await page.mouse.down();
+  await page.mouse.move(dragStart.x + dragX, dragStart.y + dragY, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(1000);
+  const chartArea = await captureDiagnostics('chart-area-before-zoom');
+  const chartCenter = chartArea.viewport?.center;
+  if (!chartCenter || Math.abs(chartCenter.longitude - target.longitude) > 3 || Math.abs(chartCenter.latitude - target.latitude) > 3) {
+    throw new Error(`Could not center chart-rich viewport near Boston: expected ${target.latitude},${target.longitude}; got ${chartCenter?.latitude},${chartCenter?.longitude}.`);
+  }
+  result.chartRichViewport = { target, actualCenter: chartCenter, overviewZoom };
+
+  // Labels and depth contours have higher minimum zooms, so make the benchmark
+  // a genuine close-up rather than assuming 18 wheel events are sufficient.
+  await wheelZoom(-180, 50);
   const closeupFirst = await captureDiagnostics('closeup-first-pass');
-  if ((closeupFirst.viewport?.zoom ?? overviewZoom) < overviewZoom + 3) {
-    throw new Error(`Zoom-transition benchmark did not reach close-up scale: overview ${overviewZoom}, close-up ${closeupFirst.viewport?.zoom}.`);
+  if ((closeupFirst.viewport?.zoom ?? overviewZoom) < 10.5) {
+    throw new Error(`Chart-rich benchmark did not reach portrayal detail scale: overview ${overviewZoom}, close-up ${closeupFirst.viewport?.zoom}.`);
   }
   result.zoomTransitions.push(closeupFirst);
 
   // Return to the original overview, capture it to prove that the map really
   // moved, then revisit the exact same close-up viewport. This tests cache
   // reuse instead of merely copying the last successful report twice.
-  await wheelZoom(180, 18);
+  await wheelZoom(180, 50);
   const overviewRepeat = await captureDiagnostics('overview-before-repeat');
   if (Math.abs((overviewRepeat.viewport?.zoom ?? Number.NaN) - overviewZoom) > 0.35) {
     throw new Error(`Zoom-transition benchmark did not return to overview: expected ${overviewZoom}, got ${overviewRepeat.viewport?.zoom}.`);
   }
   result.zoomTransitions.push(overviewRepeat);
-  await wheelZoom(-180, 18);
+  await wheelZoom(-180, 50);
   const closeupRepeat = await captureDiagnostics('closeup-repeat-pass');
   if (Math.abs((closeupRepeat.viewport?.zoom ?? Number.NaN) - (closeupFirst.viewport?.zoom ?? Number.NaN)) > 0.35) {
     throw new Error(`Repeated close-up viewport differs from first pass: ${closeupFirst.viewport?.zoom} vs ${closeupRepeat.viewport?.zoom}.`);
