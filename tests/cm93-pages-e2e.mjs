@@ -513,7 +513,7 @@ try {
     found: false,
     grid: { xOffsets: [-40, -20, 0, 20, 40], yOffsets: [10, 18, 26, 34] },
   };
-  const textAnchor = pointScan.location ?? { x: mapPoint.x, y: mapPoint.y };
+  const textAnchor = { x: mapPoint.x, y: mapPoint.y }; // The chosen _texto anchor was centered before layer isolation.
   for (const yOffset of textLabelHitScan.grid.yOffsets) {
     for (const xOffset of textLabelHitScan.grid.xOffsets) {
       await page.evaluate(() => { window.__azimuteClipboardText = ''; });
