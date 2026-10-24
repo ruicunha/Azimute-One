@@ -1626,6 +1626,19 @@ export default function App() {
                   scales: cm93Summary.scales.map(({ code, fileCount }) => ({ code, fileCount })),
                 } : null,
                 lastMapClickDiagnostic: clickReport,
+                // Small, viewport-local sample for validating real CM93 chart-text
+                // objects. This is intentionally diagnostic-only; it avoids treating
+                // dataset-wide _texto counts as proof that text is visible here.
+                textFeatureSamples: cm93RenderedFeaturesRef.current
+                  .filter((feature) => feature.properties?.cm93Class === '_texto' && feature.geometry.type === 'Point')
+                  .slice(0, 50)
+                  .map((feature) => ({
+                    coordinates: feature.geometry.coordinates,
+                    text: String(feature.properties?._texta ?? feature.properties?._TEXTA ?? ''),
+                    scale: feature.properties?.cm93Scale ?? null,
+                    sourceCell: feature.properties?.cm93SourceCell ?? null,
+                  }))
+                  .filter((feature) => feature.text.trim().length > 0),
                 testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. quiltCacheHit and quiltCacheSource identify whether the latest update reused memory, IndexedDB, or rebuilt the quilt. On cache hits, geometryMetrics are from the original cached build and are not work repeated by this render. quiltMs includes cache retrieval and preparation of the returned GeoJSON for MapLibre. MapLibre timings are measured from source update. mapFirstRenderMs is the first general render; sourceDataMs is the first source-content event; mapFirstRenderAfterSourceMs is the first render after content; sourceLoadedMs is the first isSourceLoaded event; mapRenderMs is idle; sourceLoadedToIdleMs measures loaded-to-idle. These are lifecycle timings, not pure GPU durations. Toggle one layer category at a time, repeat the same warm-cache viewport, and compare post-content render and loaded-to-idle timings. Include zoom-transition runs.',
               };
               void navigator.clipboard?.writeText(JSON.stringify(report, null, 2)).then(() => {
