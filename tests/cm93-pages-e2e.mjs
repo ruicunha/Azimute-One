@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -230,10 +231,11 @@ try {
   result.checks.mapClickDiagnosticsAvailable = true;
   await fs.writeFile(path.join(outputDir, 'closeup-map-click.json'), JSON.stringify(result.mapClickDiagnostics, null, 2));
 
-  // Layer-isolation smoke experiment: keep the same loaded viewport and
-  // toggle one portrayal category at a time. Record interaction-to-screenshot
-  // wall time as a responsiveness proxy (not as a pure MapLibre/GPU metric).
-  // The application exposes these controls specifically for portrayal testing.
+  // Layer-isolation smoke experiment. Wait for the map canvas image to remain
+  // identical across three consecutive captures before/after each toggle. This
+  // avoids the old fixed 500 ms delay, which could capture either too early or
+  // unnecessarily late. Screenshot polling adds overhead, so this remains a
+  // canvas-stability responsiveness metric, not a pure MapLibre/GPU render time.
   result.layerIsolation = [];
   const layerCases = [
     { label: 'Area fills', file: 'layer-test-no-fills.png' },
@@ -242,16 +244,35 @@ try {
     { label: 'Feature labels', file: 'layer-test-no-feature-labels.png' },
     { label: 'Depth contour labels', file: 'layer-test-no-depth-labels.png' },
   ];
+  const canvasHash = async () => createHash('sha256').update(await mapCanvas.screenshot()).digest('hex');
+  const waitForStableCanvas = async (timeoutMs = 10000) => {
+    const startedAt = Date.now();
+    let previousHash = null;
+    let stableSamples = 0;
+    let samples = 0;
+    while (Date.now() - startedAt < timeoutMs) {
+      const currentHash = await canvasHash();
+      samples += 1;
+      stableSamples = currentHash === previousHash ? stableSamples + 1 : 1;
+      if (stableSamples >= 3) {
+        return { hash: currentHash, stableMs: Date.now() - startedAt, samples };
+      }
+      previousHash = currentHash;
+      await page.waitForTimeout(100);
+    }
+    throw new Error(`Map canvas did not stabilize within ${timeoutMs} ms after a portrayal-layer change.`);
+  };
   for (const layerCase of layerCases) {
     const checkbox = page.getByRole('checkbox', { name: layerCase.label, exact: true });
     const before = await checkbox.isChecked();
+    const stableBefore = await waitForStableCanvas();
     const startedAt = Date.now();
     await checkbox.setChecked(!before);
-    await page.waitForTimeout(500);
+    const stableAfter = await waitForStableCanvas();
+    const toggleToStableCanvasMs = Date.now() - startedAt;
     await page.screenshot({ path: path.join(outputDir, layerCase.file), fullPage: false });
     // Record the app's structured diagnostics while the category is hidden.
-    // These timings still describe the last source update, not a pure layer
-    // toggle render, but the visibility flags prove which portrayal was tested.
+    // These source-update timings are not used as the toggle duration.
     await page.evaluate(() => { window.__azimuteClipboardText = ''; });
     await diagnosticsButton.click();
     await page.waitForFunction(() => typeof window.__azimuteClipboardText === 'string' && window.__azimuteClipboardText.length > 0, { timeout: 15000 });
@@ -272,11 +293,16 @@ try {
       visibilityKey,
       toggledOff: before,
       renderLayerVisibility: hiddenLayerDiagnostics.performance.renderLayerVisibility,
-      interactionToScreenshotMs: Date.now() - startedAt,
-      note: 'Visibility state is validated. Interaction-to-screenshot is a responsiveness proxy, not an isolated MapLibre/GPU render duration.',
+      canvasChanged: stableBefore.hash !== stableAfter.hash,
+      canvasHashBefore: stableBefore.hash,
+      canvasHashAfter: stableAfter.hash,
+      toggleToStableCanvasMs,
+      stableCanvasSamplesBefore: stableBefore.samples,
+      stableCanvasSamplesAfter: stableAfter.samples,
+      note: 'Canvas stability is measured by three consecutive identical canvas screenshots. Duration includes screenshot polling overhead and is not a pure MapLibre/GPU render time; canvasChanged=false means the current viewport showed no pixel change for this toggle.',
     });
     await checkbox.setChecked(before);
-    await page.waitForTimeout(250);
+    await waitForStableCanvas();
   }
   result.checks.layerVisibilityControlsRespond = result.layerIsolation.length === layerCases.length;
 
