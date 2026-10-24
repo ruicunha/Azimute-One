@@ -423,7 +423,7 @@ export default function App() {
           const usefulKeys = [
             'cm93Class', 'cm93SourceCell', 'cm93RelatedChild', 'cm93DetailLabel',
             'OBJNAM', 'OBJL', 'VALNMR', 'VALDCO', 'DRVAL1', 'DRVAL2',
-            'COLOUR', 'CATLIT', 'LITCHR', 'SIGPER', 'STATUS', 'QUASOU',
+            '_texta', 'COLOUR', 'CATLIT', 'LITCHR', 'SIGPER', 'STATUS', 'QUASOU',
           ];
           return {
             layer: feature.layer.id,
