@@ -243,6 +243,9 @@ try {
   // Labels and depth contours have higher minimum zooms, so make the benchmark
   // a genuine close-up rather than assuming 18 wheel events are sufficient.
   await wheelZoom(-180, 38);
+  // Do not accept camera zoom alone: wait until the app has selected the
+  // matching G-scale quilt after zoomend before capturing performance data.
+  await page.waitForFunction(() => /Automatic CM93 detail:.*G-scale coverage quilt/.test(document.body.innerText), { timeout: 60000 });
   const closeupFirst = await captureDiagnostics('closeup-first-pass');
   if ((closeupFirst.viewport?.zoom ?? overviewZoom) < 15.5) {
     throw new Error(`Detailed benchmark did not reach G-scale portrayal: overview ${overviewZoom}, close-up ${closeupFirst.viewport?.zoom}.`);
