@@ -347,6 +347,21 @@ try {
     }
     throw new Error(`Map canvas did not stabilize within ${timeoutMs} ms after a portrayal-layer change.`);
   };
+
+  // Point portrayal is intentionally opt-in. The initial test left every
+  // point class unchecked, so hiding the symbol/label layers could not change
+  // pixels even when the viewport contained point features. Enable a class
+  // known to be present in this chart-rich target before isolating those layers.
+  const uwtrocCheckbox = page.getByRole('checkbox', { name: /UWTROC/ });
+  if (await uwtrocCheckbox.count() === 0) {
+    throw new Error('Expected the detailed viewport to expose the UWTROC point class for portrayal validation.');
+  }
+  result.checks.pointSymbolClassAvailable = true;
+  result.checks.pointSymbolClassInitiallyUnchecked = !(await uwtrocCheckbox.isChecked());
+  await uwtrocCheckbox.check();
+  await waitForStableCanvas();
+  result.checks.pointSymbolClassEnabledForLayerIsolation = await uwtrocCheckbox.isChecked();
+
   for (const layerCase of layerCases) {
     const checkbox = page.getByRole('checkbox', { name: layerCase.label, exact: true });
     const before = await checkbox.isChecked();
@@ -373,6 +388,9 @@ try {
       throw new Error(`Layer isolation state mismatch for ${layerCase.label}: expected ${visibilityKey}=${!before}.`);
     }
     await fs.writeFile(path.join(outputDir, `layer-diagnostics-${visibilityKey}.json`), JSON.stringify(hiddenLayerDiagnostics, null, 2));
+    if (layerCase.label === 'Navigational symbols' && ! (stableBefore.hash !== stableAfter.hash)) {
+      throw new Error('Hiding navigational symbols did not change the chart after enabling the known-present UWTROC point class.');
+    }
     result.layerIsolation.push({
       layer: layerCase.label,
       visibilityKey,
