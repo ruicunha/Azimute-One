@@ -1669,6 +1669,19 @@ export default function App() {
                     relatedChild: feature.properties?.cm93RelatedChild === true,
                     coordinates: feature.geometry.type === 'Point' ? feature.geometry.coordinates : null,
                   })) : [],
+                renderedPointSymbolSamples: map ? map.queryRenderedFeatures({
+                  layers: cm93Scales.map((scale) => 'cm93-quilt-icons' + (scale === 'Z' ? '' : '-' + scale))
+                    .filter((id) => Boolean(map.getLayer(id))),
+                }).filter((feature) =>
+                  feature.geometry.type === 'Point' &&
+                  typeof feature.properties?.cm93Class === 'string' &&
+                  feature.properties?.cm93Class !== '_texto'
+                ).slice(0, 30).map((feature) => ({
+                  layer: feature.layer.id,
+                  class: feature.properties?.cm93Class,
+                  scale: feature.properties?.cm93Scale ?? null,
+                  coordinates: feature.geometry.type === 'Point' ? feature.geometry.coordinates : null,
+                })) : [],
                 testGuidance: 'Capture a cold-cache run after reloading the page and a warm-cache run by repeating the same viewport. quiltCacheHit and quiltCacheSource identify whether the latest update reused memory, IndexedDB, or rebuilt the quilt. On cache hits, geometryMetrics are from the original cached build and are not work repeated by this render. quiltMs includes cache retrieval and preparation of the returned GeoJSON for MapLibre. MapLibre timings are measured from source update. mapFirstRenderMs is the first general render; sourceDataMs is the first source-content event; mapFirstRenderAfterSourceMs is the first render after content; sourceLoadedMs is the first isSourceLoaded event; mapRenderMs is idle; sourceLoadedToIdleMs measures loaded-to-idle. These are lifecycle timings, not pure GPU durations. Toggle one layer category at a time, repeat the same warm-cache viewport, and compare post-content render and loaded-to-idle timings. Include zoom-transition runs.',
               };
               void navigator.clipboard?.writeText(JSON.stringify(report, null, 2)).then(() => {
