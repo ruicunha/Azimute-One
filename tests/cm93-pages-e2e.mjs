@@ -515,6 +515,18 @@ try {
       throw new Error(`Layer isolation state mismatch for ${layerCase.label}: expected ${visibilityKey}=${!before}.`);
     }
     await fs.writeFile(path.join(outputDir, `layer-diagnostics-${visibilityKey}.json`), JSON.stringify(hiddenLayerDiagnostics, null, 2));
+    if (layerCase.label === 'Feature labels') {
+      result.checks.featureLabelPixelChangeObserved = stableBefore.hash !== stableAfter.hash;
+      result.checks.featureLabelPixelChangeInterpretation = stableBefore.hash !== stableAfter.hash
+        ? 'Hiding feature labels changed visible pixels with a real CM93 _texto object centered in the detailed viewport.'
+        : 'A decoded _texto object was centered in the detailed viewport, but hiding feature labels did not change the canvas.';
+      if (!result.checks.realCm93TextTargetCentered) {
+        throw new Error('Feature-label pixel assertion ran without a confirmed CM93 _texto target.');
+      }
+      if (!result.checks.featureLabelPixelChangeObserved) {
+        throw new Error('Hiding feature labels did not change the canvas with a real CM93 _texto object centered in the viewport.');
+      }
+    }
     if (layerCase.label === 'Navigational symbols') {
       result.checks.symbolLayerPixelChangeObserved = stableBefore.hash !== stableAfter.hash;
       result.checks.symbolLayerPixelChangeInterpretation = stableBefore.hash !== stableAfter.hash
