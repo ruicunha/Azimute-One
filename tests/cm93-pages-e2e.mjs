@@ -57,7 +57,7 @@ try {
   await page.screenshot({ path: path.join(outputDir, 'dataset-recognized.png'), fullPage: true });
 
   await page.getByRole('button', { name: 'Render CM93 dataset overview' }).click();
-  await page.getByText(/^Rendered [0-9,]+ features from [0-9,]+\/[0-9,]+ CM93 [A-Z]-scale cells\./, { timeout: 600000 }).waitFor();
+  await page.getByText(/^Rendered [0-9,]+ features from [0-9,]+\/[0-9,]+ CM93 [A-Z]-scale cells\./).waitFor({ timeout: 600000 });
   result.checks.cm93OverviewRendered = true;
   result.renderStatus = await page.locator('body').innerText();
   await page.screenshot({ path: path.join(outputDir, 'overview-rendered.png'), fullPage: true });
@@ -88,7 +88,7 @@ try {
   await page.locator('input[webkitdirectory]').setInputFiles(datasetDir, { timeout: 120000 });
   await page.getByText('CM93 V2 structure recognized', { exact: true }).waitFor({ timeout: 180000 });
   await page.getByRole('button', { name: 'Render CM93 dataset overview' }).click();
-  await page.getByText(/^Rendered [0-9,]+ features from [0-9,]+\/[0-9,]+ CM93 [A-Z]-scale cells\./, { timeout: 600000 }).waitFor();
+  await page.getByText(/^Rendered [0-9,]+ features from [0-9,]+\/[0-9,]+ CM93 [A-Z]-scale cells\./).waitFor({ timeout: 600000 });
   const indexedDbHit = page.getByText(/INDEXEDDB HIT — reused persistent processed geometry/);
   await indexedDbHit.waitFor({ timeout: 180000 });
   result.checks.indexedDbCacheHitAfterReload = true;
