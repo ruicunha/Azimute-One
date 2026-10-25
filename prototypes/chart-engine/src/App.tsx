@@ -1487,6 +1487,7 @@ export default function App() {
             {selectedCharts.length ? <ul>{selectedCharts.map((title) => <li key={title}>{title}</li>)}</ul> : <p>No chart currently matches this viewport.</p>}
           </div>
           <label className="file-button"><span>Load ENC file</span><input type="file" accept=".000,.zip,application/zip,application/octet-stream" onChange={(event) => void onFile(event.target.files?.[0])} /></label>
+          <label className="file-button"><span>Inspect CM93 V2 ZIP</span><input type="file" accept=".zip,application/zip" onChange={(event) => void onCm93Zip(event.target.files?.[0])} /></label>
           <label className="file-button"><span>Inspect CM93 V2 directory</span><input ref={cm93DirectoryInput} type="file" multiple onChange={(event) => onCm93Directory(event.target.files)} /></label>
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93CellAtMapCenter()}>Render CM93 cell at map centre</button>}
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93Overview()}>Render CM93 dataset overview</button>}
