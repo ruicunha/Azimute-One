@@ -645,7 +645,32 @@ export default function App() {
     cm93DirectoryInput.current?.setAttribute('directory', '');
   }, []);
 
-  const onCm93Directory = async (files?: FileList | null) => {
+  const onCm93Zip = async (archive?: File | null) => {
+    if (!archive) return;
+    try {
+      setStatus('loading');
+      setMessage('Reading CM93 ZIP archive…');
+      const entries = unzipSync(new Uint8Array(await archive.arrayBuffer()));
+      const extractedFiles = Object.entries(entries)
+        .filter(([path, bytes]) => path.length > 0 && !path.endsWith('/') && bytes.length > 0 && !path.startsWith('__MACOSX/'))
+        .map(([path, bytes]) => {
+          const name = path.split('/').pop() || path;
+          const file = new File([bytes], name);
+          Object.defineProperty(file, 'webkitRelativePath', { value: path });
+          return file;
+        });
+      if (!extractedFiles.length) throw new Error('The selected ZIP archive contains no readable CM93 files.');
+      await onCm93Directory(extractedFiles);
+    } catch (error) {
+      setCm93Summary(null);
+      setCm93DictionaryStats(null);
+      setCm93CellStats(null);
+      setStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Could not read the CM93 ZIP archive.');
+    }
+  };
+
+  const onCm93Directory = async (files?: FileList | File[] | null) => {
     if (!files?.length) return;
     try {
       const summary = inspectCm93Files(files);
