@@ -645,7 +645,32 @@ export default function App() {
     cm93DirectoryInput.current?.setAttribute('directory', '');
   }, []);
 
-  const onCm93Directory = async (files?: FileList | null) => {
+  const onCm93Zip = async (archive?: File | null) => {
+    if (!archive) return;
+    try {
+      setStatus('loading');
+      setMessage('Reading CM93 ZIP archive…');
+      const entries = unzipSync(new Uint8Array(await archive.arrayBuffer()));
+      const extractedFiles = Object.entries(entries)
+        .filter(([path, bytes]) => path.length > 0 && !path.endsWith('/') && bytes.length > 0 && !path.startsWith('__MACOSX/'))
+        .map(([path, bytes]) => {
+          const name = path.split('/').pop() || path;
+          const file = new File([bytes], name);
+          Object.defineProperty(file, 'webkitRelativePath', { value: path });
+          return file;
+        });
+      if (!extractedFiles.length) throw new Error('The selected ZIP archive contains no readable CM93 files.');
+      await onCm93Directory(extractedFiles);
+    } catch (error) {
+      setCm93Summary(null);
+      setCm93DictionaryStats(null);
+      setCm93CellStats(null);
+      setStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Could not read the CM93 ZIP archive.');
+    }
+  };
+
+  const onCm93Directory = async (files?: FileList | File[] | null) => {
     if (!files?.length) return;
     try {
       const summary = inspectCm93Files(files);
@@ -1487,6 +1512,7 @@ export default function App() {
             {selectedCharts.length ? <ul>{selectedCharts.map((title) => <li key={title}>{title}</li>)}</ul> : <p>No chart currently matches this viewport.</p>}
           </div>
           <label className="file-button"><span>Load ENC file</span><input type="file" accept=".000,.zip,application/zip,application/octet-stream" onChange={(event) => void onFile(event.target.files?.[0])} /></label>
+          <label className="file-button"><span>Inspect CM93 V2 ZIP</span><input type="file" accept=".zip,application/zip" onChange={(event) => void onCm93Zip(event.target.files?.[0])} /></label>
           <label className="file-button"><span>Inspect CM93 V2 directory</span><input ref={cm93DirectoryInput} type="file" multiple onChange={(event) => onCm93Directory(event.target.files)} /></label>
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93CellAtMapCenter()}>Render CM93 cell at map centre</button>}
           {cm93Summary?.isLikelyCm93V2 && <button className="secondary-button" type="button" onClick={() => void renderCm93Overview()}>Render CM93 dataset overview</button>}
